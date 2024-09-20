@@ -1,0 +1,30 @@
+[package]
+name = "light-pivot-attiny85"
+version = "0.1.0"
+edition = "2021"
+
+# [features]
+# default = ["rt"]
+# rt = ["attiny85-hal/rt"]
+
+[dependencies]
+# A panic handler is needed.  This is a crate with the most basic one.
+# The `leonardo-panic` example shows a more elaborate version.
+panic-halt = "0.2.0"
+avr-device = { version = "0.6.0", features = ["attiny85", "rt"] }
+attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"] }
+embedded-hal = "1.0.0"
+
+# Configure the build for minimal size
+[profile.dev]
+panic = "abort"
+lto = true
+opt-level = "s"
+debug-assertions = false
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+debug-assertions = false
