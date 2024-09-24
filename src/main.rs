@@ -31,7 +31,6 @@ fn main() -> ! {
         dp.TC1,
         pins.pb3.into_floating_input(),
         pins.pb4.into_output(),
-        attiny_hal::clock::MHz8,
     );
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 

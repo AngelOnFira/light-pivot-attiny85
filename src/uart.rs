@@ -12,48 +12,29 @@ use nb::Error::WouldBlock;
 use void::Void;
 
 pub struct SoftwareUart {
-    serial: Serial<Pin<Output, PB4>, Pin<Input, PB3>, Timer<attiny_hal::clock::MHz16>>,
+    serial: Serial<Pin<Output, PB4>, Pin<Input, PB3>, Timer>,
 }
 
-pub struct Timer<SPEED> {
-    delay: Delay<SPEED>,
-    duration: u32,
-    started: bool,
+pub struct Timer {
+    timer: Timer1Pwm,
 }
 
-impl<SPEED> Timer<SPEED> {
-    pub fn new(delay: Delay<SPEED>) -> Self {
-        Timer {
-            delay,
-            duration: 0,
-            started: false,
-        }
-    }
-}
-
-impl<SPEED> CountDown for Timer<SPEED> {
+impl CountDown for Timer {
     type Time = u32;
 
     fn start<T>(&mut self, count: T)
     where
         T: Into<Self::Time>,
     {
-        self.duration = count.into();
-        self.started = true;
+        self.timer.
     }
 
     fn wait(&mut self) -> nb::Result<(), Void> {
-        if self.started {
-            self.delay.delay_us(self.duration);
-            self.started = false;
-            Ok(())
-        } else {
-            Err(WouldBlock)
-        }
+        todo!()
     }
 }
 
-impl<SPEED> Periodic for Timer<SPEED> {}
+impl Periodic for Timer {}
 
 impl SoftwareUart {
     pub fn new(
@@ -61,15 +42,15 @@ impl SoftwareUart {
         rx: Pin<Input<Floating>, PB3>,
         tx: Pin<Output, PB4>,
     ) -> Self {
-        // let delay = Delay::<C>::new();
-        // let timer = Timer::new(delay);
-        let mut timer = Timer1Pwm::new(tc1, attiny_hal::simple_pwm::Prescaler::Prescale1024);
-        let serial = Serial::new(tx, rx, timer).unwrap();
+        let mut timer = Timer {
+            timer: Timer1Pwm::new(tc1, attiny_hal::simple_pwm::Prescaler::Prescale1024),
+        };
+        let serial = Serial::new(tx, rx, timer);
 
         SoftwareUart { serial }
     }
 
-    pub fn receive(&mut self) -> Result<u8, Error> {
+    pub fn receive(&mut self) {
         self.serial.read()
     }
 }
