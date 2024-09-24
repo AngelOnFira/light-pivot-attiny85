@@ -1,5 +1,6 @@
 use attiny_hal::clock::Clock;
 use attiny_hal::delay::Delay;
+use attiny_hal::pac::TC1;
 use attiny_hal::port::mode::{Floating, Input, Output};
 use attiny_hal::port::{Pin, PB3, PB4};
 use attiny_hal::prelude::_embedded_hal_timer_CountDown;
@@ -12,25 +13,51 @@ use nb::Error::WouldBlock;
 use void::Void;
 
 pub struct SoftwareUart {
-    serial: Serial<Pin<Output, PB4>, Pin<Input, PB3>, Timer>,
+    serial: Serial<Pin<Output, PB4>, Pin<Input<Floating>, PB3>, Timer>,
 }
 
-pub struct Timer {
-    timer: Timer1Pwm,
+struct Timer {
+    inner: TC1,
+    frequency: u32,
+    skip: u8,
+    long: bool,
+}
+
+impl Timer {
+    pub fn new(timer: TC1) -> Self {
+        Self {
+            inner: timer,
+            frequency: 9600,
+            skip: 2,
+            long: true,
+        }
+    }
 }
 
 impl CountDown for Timer {
-    type Time = u32;
+    type Time = bool;
 
-    fn start<T>(&mut self, count: T)
-    where
-        T: Into<Self::Time>,
-    {
-        self.timer.
+    fn start<T: Into<bool>>(&mut self, long: T) {
+        self.inner.tccr1.write(|w| w.cs1().direct());
+        self.inner.tcnt1.write(|w| unsafe { w.bits(0) });
+        self.skip = 2;
+        self.long = long.into();
     }
 
-    fn wait(&mut self) -> nb::Result<(), Void> {
-        todo!()
+    fn wait(&mut self) -> nb::Result<(), void::Void> {
+        let mut bits = self.inner.tcnt1.read().bits();
+        if self.skip == 0 {
+            bits += 1;
+            self.skip = 2;
+        } else {
+            self.skip -= 1;
+        }
+        if (self.long && bits < 1667) || (!self.long && bits < 833) {
+            Err(nb::Error::WouldBlock)
+        } else {
+            self.inner.tcnt1.write(|w| unsafe { w.bits(0) });
+            Ok(())
+        }
     }
 }
 
@@ -42,9 +69,7 @@ impl SoftwareUart {
         rx: Pin<Input<Floating>, PB3>,
         tx: Pin<Output, PB4>,
     ) -> Self {
-        let mut timer = Timer {
-            timer: Timer1Pwm::new(tc1, attiny_hal::simple_pwm::Prescaler::Prescale1024),
-        };
+        let timer = Timer::new(tc1);
         let serial = Serial::new(tx, rx, timer);
 
         SoftwareUart { serial }
