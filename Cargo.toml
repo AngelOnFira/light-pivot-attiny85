@@ -12,7 +12,7 @@ edition = "2021"
 # The `leonardo-panic` example shows a more elaborate version.
 panic-halt = "0.2.0"
 avr-device = { version = "0.6.0", features = ["attiny85", "rt"] }
-attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"] }
+attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85"] }
 embedded-hal = "1.0.0"
 
 # Configure the build for minimal size

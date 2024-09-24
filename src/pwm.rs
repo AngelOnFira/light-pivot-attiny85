@@ -1,6 +1,6 @@
+use attiny_hal::pac::{TC0, TC1};
 use attiny_hal::port::Pin;
-use attiny_hal::port::mode::PwmOutput;
-use avr_device::attiny85::{TC0, TC1};
+use attiny_hal::port::mode::{Output, PwmOutput};
 
 pub struct Pwm {
     tc0: TC0,
@@ -26,17 +26,16 @@ impl Pwm {
 
         Pwm { tc0, tc1 }
     }
-
-    pub fn get_output<PIN>(&mut self, pin: &Pin<PwmOutput<TC0>, PIN>) -> PwmPin<PIN> {
-        PwmPin { pin: *pin }
+    pub fn get_output<'a, PIN>(&'a mut self, pin: &'a Pin<Output, PIN>) -> PwmPin<'a, PIN> {
+        PwmPin { pin }
     }
 }
 
-pub struct PwmPin<PIN> {
-    pin: Pin<PwmOutput<TC0>, PIN>,
+pub struct PwmPin<'a, PIN> {
+    pin: &'a Pin<Output, PIN>,
 }
 
-impl<PIN> PwmPin<PIN> {
+impl<'a, PIN> PwmPin<'a, PIN> {
     pub fn set_duty(&mut self, duty: u8) {
         self.pin.set_duty(duty);
     }

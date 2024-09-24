@@ -2,40 +2,39 @@
 #![no_std]
 #![feature(abi_avr_interrupt)]
 
+use attiny_hal::port::mode::{Output, PwmOutput};
+use attiny_hal::port::Pin;
+use attiny_hal::prelude::*;
 use avr_device::{
     attiny85::Peripherals,
     interrupt::{self, free, Mutex},
 };
 use core::cell::RefCell;
-use attiny_hal::port::Pin;
-use attiny_hal::port::mode::{Output, PwmOutput};
-use attiny_hal::prelude::*;
 
-mod uart;
 mod buffer;
 mod pwm;
+mod uart;
 
-use uart::Uart;
 use buffer::Buffer;
 use pwm::Pwm;
+use uart::Uart;
 
 static UART: Mutex<RefCell<Option<Uart>>> = Mutex::new(RefCell::new(None));
 static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
 
 #[avr_device::entry]
 fn main() -> ! {
-    let dp = Peripherals::take().unwrap();
-    let pins = attiny_hal::Pins::new(dp.PORTB);
-
+    let dp = attiny_hal::Peripherals::take().unwrap();
+    let pins: attiny_hal::Pins = attiny_hal::pins!(dp);
     // Set up UART
-    let uart = Uart::new(pins.pb3, pins.pb4);
+    let uart = Uart::new(pins.pb3.into_floating_input(), pins.pb4.into_output());
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 
     // Set up PWM for servos and light
     let mut pwm = Pwm::new(dp.TC0, dp.TC1);
-    let base_servo = pwm.get_output(&pins.pb0);
-    let tilt_servo = pwm.get_output(&pins.pb1);
-    let light = pwm.get_output(&pins.pb2);
+    let base_servo = pwm.get_output(&pins.pb0.into_output());
+    let tilt_servo = pwm.get_output(&pins.pb1.into_output());
+    let light = pwm.get_output(&pins.pb2.into_output());
 
     unsafe { avr_device::interrupt::enable() };
 

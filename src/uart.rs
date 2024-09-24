@@ -1,5 +1,5 @@
-use attiny_hal::port::Pin;
-use attiny_hal::port::mode::{Input, Output};
+use attiny_hal::port::{Pin, PB3, PB4};
+use attiny_hal::port::mode::{Floating, Input, Output};
 use avr_device::attiny85::USI;
 
 pub struct Uart {
@@ -9,7 +9,7 @@ pub struct Uart {
 }
 
 impl Uart {
-    pub fn new(rx: Pin<Input, PB3>, tx: Pin<Output, PB4>) -> Self {
+    pub fn new(rx: Pin<Input<Floating>, PB3>, tx: Pin<Output, PB4>) -> Self {
         let usi = unsafe { &*USI::ptr() };
         
         // Configure USI for UART operation
