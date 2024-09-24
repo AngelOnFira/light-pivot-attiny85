@@ -19,15 +19,21 @@ use buffer::Buffer;
 use pwm::Pwm;
 use uart::SoftwareUart;
 
-static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
+// Define constants for baud rate and CPU frequency
+const BAUD_RATE: u32 = 9600;
+const CPU_FREQUENCY: u32 = 8_000_000; // Adjust this to match your ATtiny85's clock speed
+
+static UART: Mutex<RefCell<Option<SoftwareUart<BAUD_RATE, CPU_FREQUENCY>>>> =
+    Mutex::new(RefCell::new(None));
 static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
 
 #[avr_device::entry]
 fn main() -> ! {
     let dp = attiny_hal::Peripherals::take().unwrap();
     let pins: attiny_hal::Pins = attiny_hal::pins!(dp);
-    // Set up UART
-    let uart = SoftwareUart::new(
+
+    // Set up UART with the new constant generic parameters
+    let uart: SoftwareUart<BAUD_RATE, CPU_FREQUENCY> = SoftwareUart::new(
         dp.TC1,
         pins.pb3.into_floating_input(),
         pins.pb4.into_output(),
