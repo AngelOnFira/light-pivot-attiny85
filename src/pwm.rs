@@ -32,17 +32,17 @@ impl Pwm {
 
         Pwm { tc0, tc1 }
     }
-    pub fn get_output<'a, PIN>(&'a mut self, pin: &'a Pin<Output, PIN>) -> PwmPin<'a, PIN> {
-        PwmPin { pin }
-    }
+    // pub fn get_output<PIN>(&mut self, pin: &Pin<Output, PIN>) -> PwmPin<PIN> {
+    //     PwmPin { pin }
+    // }
 }
 
-pub struct PwmPin<'a, PIN> {
-    pin: &'a Pin<Output, PIN>,
+pub struct PwmPin<PIN> {
+    pin: Pin<Output, PIN>,
 }
 
-impl<'a, PIN> PwmPin<'a, PIN> {
-    pub fn set_duty(&mut self, duty: u8) {
-        self.pin.set_duty(duty);
-    }
+impl<PIN> PwmPin<PIN> {
+    // pub fn set_duty(&mut self, duty: u8) {
+    //     self.pin.set_duty(duty);
+    // }
 }

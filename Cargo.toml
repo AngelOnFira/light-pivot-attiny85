@@ -21,13 +21,13 @@ void = { version = "1.0.2", default-features = false }
 # Configure the build for minimal size
 [profile.dev]
 panic = "abort"
-lto = true
+lto = "thin"
 opt-level = "s"
 debug-assertions = false
 
 [profile.release]
 panic = "abort"
 codegen-units = 1
-lto = true
+lto = "thin"
 opt-level = "s"
 debug-assertions = false

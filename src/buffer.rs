@@ -32,4 +32,12 @@ impl Buffer {
             None
         }
     }
+
+    pub fn len(&self) -> usize {
+        if self.write_idx >= self.read_idx {
+            self.write_idx - self.read_idx
+        } else {
+            BUFFER_SIZE - self.read_idx + self.write_idx
+        }
+    }
 }
