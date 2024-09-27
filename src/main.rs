@@ -2,16 +2,10 @@
 #![no_std]
 #![feature(abi_avr_interrupt)]
 
-use attiny_hal::pac::tc0::tccr0b::CS0_A;
-use attiny_hal::port::mode::{Output, PwmOutput};
-use attiny_hal::port::Pin;
 use attiny_hal::prelude::*;
 use attiny_hal::simple_pwm::IntoPwmPin;
 use attiny_hal::simple_pwm::{Prescaler, Timer0Pwm};
-use avr_device::{
-    attiny85::Peripherals,
-    interrupt::{self, free, Mutex},
-};
+use avr_device::interrupt::{free, Mutex};
 use core::cell::RefCell;
 use panic_halt as _;
 
@@ -62,7 +56,7 @@ fn main() -> ! {
     // let mut pwm = Pwm::new(dp.TC0, dp.TC1);
     let mut base_servo = pins.pb0.into_output().into_pwm(&timer0);
     let mut tilt_servo = pins.pb1.into_output().into_pwm(&timer0);
-    let light = pins.pb2.into_output();
+    let _light = pins.pb2.into_output();
 
     unsafe { avr_device::interrupt::enable() };
 
@@ -73,10 +67,10 @@ fn main() -> ! {
                 let id_and_light = buffer.pop().unwrap();
                 let rotation = buffer.pop().unwrap();
                 let tilt = buffer.pop().unwrap();
-                let checksum = buffer.pop().unwrap(); // Assuming a 4th byte for checksum
+                let _checksum = buffer.pop().unwrap(); // Assuming a 4th byte for checksum
 
                 let id = (id_and_light & 0xF0) >> 4;
-                let light_state = id_and_light & 0x0F;
+                let _light_state = id_and_light & 0x0F;
 
                 // Check if this message is for this device
                 if id == DEVICE_ID {
