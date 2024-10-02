@@ -84,8 +84,6 @@ checksum = "f8fe8f5a8a398345e52358e18ff07cc17a568fbca5c6f73873d3a62056309603"
 [[package]]
 name = "bitbang-hal"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a6e78d48a099db1643b06824ea903b72c39b38ebc0e98ba5a6693d35f360a28"
 dependencies = [
  "embedded-hal 0.2.7",
  "nb 1.1.0",

@@ -18,11 +18,12 @@ mod uart;
 use uart::SoftwareUart;
 
 // Define constants for baud rate and CPU frequency
-const BAUD_RATE: u32 = 9600;
+const BAUD_RATE: u32 = 9600 * 2;
 const CPU_FREQUENCY: u32 = 8_000_000; // Adjust this to match your ATtiny85's clock speed
 const DEVICE_ID: u8 = 0x01;
-static UART: Mutex<RefCell<Option<SoftwareUart<BAUD_RATE, CPU_FREQUENCY>>>> =
-    Mutex::new(RefCell::new(None));
+// static UART: Mutex<RefCell<Option<SoftwareUart<BAUD_RATE, CPU_FREQUENCY>>>> =
+//     Mutex::new(RefCell::new(None));
+static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
 // static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
 
 #[avr_device::entry]
@@ -44,23 +45,73 @@ fn main() -> ! {
     // tc0.ocr0a.write(|w| w.bits(77));
     // let timer0 = Timer0Pwm::new(tc0, Prescaler::Prescale1024);
 
+    // let mut led = pins.pb4.into_output_high();
+
     // Set up UART with the new constant generic parameters
-    let uart: SoftwareUart<BAUD_RATE, CPU_FREQUENCY> = SoftwareUart::new(
+    let mut uart: SoftwareUart = SoftwareUart::new(
         dp.TC1,
         pins.pb3.into_floating_input(),
-        pins.pb4.into_output(),
+        pins.pb4.into_output_high(),
     );
-    free(|cs| UART.borrow(cs).replace(Some(uart)));
+    // free(|cs| UART.borrow(cs).replace(Some(uart)));
+
+    // Set up a timer to set pin high for 1 second, then low for 1 second
+    let mut timer = dp.TC0;
+    timer.tccr0a.write(|w| w.wgm0().ctc());
+    timer.ocr0a.write(|w| w.bits(125));
+    timer.tccr0b.write(|w| w.cs0().prescale_1024());
 
     loop {
         // Send test data
-        free(|cs| {
-            if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-                uart.send(DEVICE_ID).unwrap();
-                uart.send(0x01).unwrap();
-                uart.send(0x02).unwrap();
+        // if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+        //     uart.send(DEVICE_ID).unwrap();
+        //     uart.send(0x01).unwrap();
+        //     uart.send(0x02).unwrap();
+        // }
+
+        // Send test data
+        uart.send(b'H').unwrap();
+        uart.send(b'e').unwrap();
+        uart.send(b'l').unwrap();
+        uart.send(b'l').unwrap();
+        uart.send(b'o').unwrap();
+        uart.send(b'\r').unwrap();
+        uart.send(b'\n').unwrap();
+
+        // // set the led high
+        // led.set_high();
+
+        // Wait for about 1 second
+        // for _ in 0..1000000 {
+        //     avr_device::asm::nop();
+        // }
+
+
+        // // Set pin high
+        // led.set_high();
+
+        // Wait for 1 second (64 timer overflows)
+        for _ in 0..64 {
+            while timer.tcnt0.read().bits() < 124 {
+                avr_device::asm::sleep();
             }
-        });
+            timer.tcnt0.write(|w| w.bits(0)); // Reset the counter
+        }
+
+        // // 8000000 / 1024 = 7812.5 / 125 = 62.5 per second
+
+        // // Set pin low
+        // led.set_low();
+
+        // // Wait for another 1 second
+        // for _ in 0..64 {
+        //     while timer.tcnt0.read().bits() < 124 {
+        //         avr_device::asm::sleep();
+        //     }
+        //     timer.tcnt0.write(|w| w.bits(0)); // Reset the counter
+        // }
+
+        // avr_device::asm::sleep();
     }
 
     // // Set up PWM for servos and light
@@ -128,3 +179,4 @@ fn main() -> ! {
 // - Make sure can flash to chip
 // - Verify PWM math, test servo movement
 // - Maybe calibrate oscillator
+// - Wait isn't working

@@ -13,8 +13,8 @@ edition = "2021"
 panic-halt = "0.2.0"
 avr-device = { version = "0.6.0", features = ["attiny85", "rt"] }
 attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"] }
-embedded-hal = "0.2.7"
-bitbang-hal = "0.3.3"
+embedded-hal = { version = "0.2.7", features = ["unproven"] }
+bitbang-hal = { path = "../bitbang-hal" }
 nb = "1.1.0"
 void = { version = "1.0.2", default-features = false }
 
