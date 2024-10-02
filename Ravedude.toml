@@ -1,0 +1,5 @@
+# Ravedude.toml
+[general]
+open-console = true
+serial-baudrate = 19200
+board = "attiny85"

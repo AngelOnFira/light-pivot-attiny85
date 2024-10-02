@@ -2,6 +2,7 @@ use attiny_hal::pac::TC1;
 use attiny_hal::port::mode::{Floating, Input, Output};
 use attiny_hal::port::{Pin, PB3, PB4};
 use attiny_hal::prelude::_embedded_hal_serial_Read;
+use attiny_hal::prelude::_embedded_hal_serial_Write;
 use bitbang_hal::serial::{Error, Serial};
 use core::convert::Infallible;
 use embedded_hal::timer::{CountDown, Periodic};
@@ -78,7 +79,7 @@ impl<const BAUD_RATE: u32, const CPU_FREQUENCY: u32> CountDown for Timer<BAUD_RA
             Prescaler::Div1024 => w.cs1().prescale_1024(),
         });
         // Reset timer count
-        self.inner.tcnt1.write(|w| unsafe { w.bits(0) });
+        self.inner.tcnt1.write(|w| w.bits(0));
     }
 
     fn wait(&mut self) -> nb::Result<(), Void> {
@@ -87,7 +88,7 @@ impl<const BAUD_RATE: u32, const CPU_FREQUENCY: u32> CountDown for Timer<BAUD_RA
             Err(WouldBlock)
         } else {
             // Reset timer count
-            self.inner.tcnt1.write(|w| unsafe { w.bits(0) });
+            self.inner.tcnt1.write(|w| w.bits(0));
             Ok(())
         }
     }
@@ -105,5 +106,9 @@ impl<const BAUD_RATE: u32, const CPU_FREQUENCY: u32> SoftwareUart<BAUD_RATE, CPU
 
     pub fn receive(&mut self) -> nb::Result<u8, Error<Infallible>> {
         self.serial.read()
+    }
+
+    pub fn send(&mut self, data: u8) -> nb::Result<(), Error<Infallible>> {
+        self.serial.write(data)
     }
 }

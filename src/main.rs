@@ -9,11 +9,11 @@ use avr_device::interrupt::{free, Mutex};
 use core::cell::RefCell;
 use panic_halt as _;
 
-mod buffer;
+// mod buffer;
 // mod pwm;
 mod uart;
 
-use buffer::Buffer;
+// use buffer::Buffer;
 // use pwm::Pwm;
 use uart::SoftwareUart;
 
@@ -23,7 +23,7 @@ const CPU_FREQUENCY: u32 = 8_000_000; // Adjust this to match your ATtiny85's cl
 const DEVICE_ID: u8 = 0x01;
 static UART: Mutex<RefCell<Option<SoftwareUart<BAUD_RATE, CPU_FREQUENCY>>>> =
     Mutex::new(RefCell::new(None));
-static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
+// static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
 
 #[avr_device::entry]
 fn main() -> ! {
@@ -39,10 +39,10 @@ fn main() -> ! {
     // We need to work with 50 Hz.
     // 8_000_000 / 128
 
-    let tc0 = dp.TC0;
-    tc0.tccr0a.write(|w| w.wgm0().ctc());
-    tc0.ocr0a.write(|w| w.bits(77));
-    let timer0 = Timer0Pwm::new(tc0, Prescaler::Prescale1024);
+    // let tc0 = dp.TC0;
+    // tc0.tccr0a.write(|w| w.wgm0().ctc());
+    // tc0.ocr0a.write(|w| w.bits(77));
+    // let timer0 = Timer0Pwm::new(tc0, Prescaler::Prescale1024);
 
     // Set up UART with the new constant generic parameters
     let uart: SoftwareUart<BAUD_RATE, CPU_FREQUENCY> = SoftwareUart::new(
@@ -52,48 +52,79 @@ fn main() -> ! {
     );
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 
-    // Set up PWM for servos and light
-    // let mut pwm = Pwm::new(dp.TC0, dp.TC1);
-    let mut base_servo = pins.pb0.into_output().into_pwm(&timer0);
-    let mut tilt_servo = pins.pb1.into_output().into_pwm(&timer0);
-    let _light = pins.pb2.into_output();
-
-    unsafe { avr_device::interrupt::enable() };
-
     loop {
+        // Send test data
         free(|cs| {
-            let mut buffer = BUFFER.borrow(cs).borrow_mut();
-            if buffer.len() >= 4 {
-                let id_and_light = buffer.pop().unwrap();
-                let rotation = buffer.pop().unwrap();
-                let tilt = buffer.pop().unwrap();
-                let _checksum = buffer.pop().unwrap(); // Assuming a 4th byte for checksum
-
-                let id = (id_and_light & 0xF0) >> 4;
-                let _light_state = id_and_light & 0x0F;
-
-                // Check if this message is for this device
-                if id == DEVICE_ID {
-                    // Process the message
-                    base_servo.set_duty(rotation);
-                    tilt_servo.set_duty(tilt);
-                    // Handle light state
-                }
+            if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+                uart.send(DEVICE_ID).unwrap();
+                uart.send(0x01).unwrap();
+                uart.send(0x02).unwrap();
             }
         });
-
-        // Sleep to save power
-        avr_device::asm::sleep();
     }
+
+    // // Set up PWM for servos and light
+    // // let mut pwm = Pwm::new(dp.TC0, dp.TC1);
+    // let mut base_servo = pins.pb0.into_output().into_pwm(&timer0);
+    // let mut tilt_servo = pins.pb1.into_output().into_pwm(&timer0);
+    // let _light = pins.pb2.into_output();
+
+    // unsafe { avr_device::interrupt::enable() };
+
+    // loop {
+    //     free(|cs| {
+    //         let mut buffer = BUFFER.borrow(cs).borrow_mut();
+    //         if buffer.len() == 3 {
+    //             let id_and_light = buffer.pop().unwrap();
+    //             let rotation = buffer.pop().unwrap();
+    //             let tilt = buffer.pop().unwrap();
+
+    //             let id = (id_and_light & 0xF0) >> 4;
+    //             let light_state = id_and_light & 0x0F;
+
+    //             // Check if this message is for this device
+    //             if id == DEVICE_ID {
+    //                 // Process the message
+    //                 // base_servo.set_duty(rotation);
+    //                 // tilt_servo.set_duty(tilt);
+    //                 // Handle light state
+    //                 if light_state == 0x01 {
+    //                     // Turn light on
+    //                 } else {
+    //                     // Turn light off
+    //                 }
+    //             }
+
+    //             // Echo back the received data
+
+    //             if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+    //                 uart.send(rotation).unwrap();
+    //                 uart.send(tilt).unwrap();
+    //                 uart.send(light_state).unwrap();
+    //             }
+    //         }
+    //     });
+
+    //     // Sleep to save power
+    //     avr_device::asm::sleep();
+    // }
 }
 
-#[avr_device::interrupt(attiny85)]
-fn USI_START() {
-    free(|cs| {
-        if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-            if let Ok(byte) = uart.receive() {
-                BUFFER.borrow(cs).borrow_mut().push(byte);
-            }
-        }
-    });
-}
+// #[avr_device::interrupt(attiny85)]
+// fn USI_START() {
+//     free(|cs| {
+//         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+//             if let Ok(byte) = uart.receive() {
+//                 BUFFER.borrow(cs).borrow_mut().push(byte);
+//             }
+//         }
+//     });
+// }
+
+// - When recieving UART, need to throw away data if didn't get 4 in a certain
+// amount of data
+// - No ID needed, 3 bytes total
+// - First test is get data, echo response
+// - Make sure can flash to chip
+// - Verify PWM math, test servo movement
+// - Maybe calibrate oscillator
