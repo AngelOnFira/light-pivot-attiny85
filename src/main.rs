@@ -1,19 +1,22 @@
 #![no_main]
 #![no_std]
 #![feature(abi_avr_interrupt)]
+#![feature(panic_info_message)]
 
+use attiny_hal::pac::cpu::OSCCAL;
 use attiny_hal::prelude::*;
 use attiny_hal::simple_pwm::IntoPwmPin;
 use attiny_hal::simple_pwm::{Prescaler, Timer0Pwm};
+use avr_device::asm::nop;
 use avr_device::interrupt::{free, Mutex};
 use core::cell::RefCell;
 use panic_halt as _;
 
-// mod buffer;
+mod buffer;
 // mod pwm;
 mod uart;
 
-// use buffer::Buffer;
+use buffer::Buffer;
 // use pwm::Pwm;
 use uart::SoftwareUart;
 
@@ -21,10 +24,11 @@ use uart::SoftwareUart;
 const BAUD_RATE: u32 = 9600 * 2;
 const CPU_FREQUENCY: u32 = 8_000_000; // Adjust this to match your ATtiny85's clock speed
 const DEVICE_ID: u8 = 0x01;
+const OSCCAL_ADJUSTMENT: i16 = -2;
 // static UART: Mutex<RefCell<Option<SoftwareUart<BAUD_RATE, CPU_FREQUENCY>>>> =
 //     Mutex::new(RefCell::new(None));
 static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
-// static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
+static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
 
 #[avr_device::entry]
 fn main() -> ! {
@@ -36,6 +40,13 @@ fn main() -> ! {
     // since the clock register size is 8 bits, the timer is full every
     // 1/(16e6/64)*2^8 ≈ 10 ms
     //
+
+    // Read the current value of OSCCAL
+    let current_value = dp.CPU.osccal.read().bits();
+    // Calculate the new value to set
+    let new_value = current_value as i16 + OSCCAL_ADJUSTMENT;
+    // Write the new value to OSCCAL
+    dp.CPU.osccal.write(|w| w.bits(new_value as u8));
 
     // We need to work with 50 Hz.
     // 8_000_000 / 128
@@ -53,7 +64,20 @@ fn main() -> ! {
         pins.pb3.into_floating_input(),
         pins.pb4.into_output_high(),
     );
-    // free(|cs| UART.borrow(cs).replace(Some(uart)));
+
+    // Send a test message
+    uart.send(b'T').unwrap();
+    uart.send(b'E').unwrap();
+    uart.send(b'S').unwrap();
+    uart.send(b'T').unwrap();
+    uart.send(b'\n').unwrap();
+    uart.send(b'\r').unwrap();
+
+    // panic!("Test panic");
+
+    free(|cs| UART.borrow(cs).replace(Some(uart)));
+
+    // uart.send(b'1').unwrap();
 
     // Set up a timer to set pin high for 1 second, then low for 1 second
     let mut timer = dp.TC0;
@@ -61,58 +85,7 @@ fn main() -> ! {
     timer.ocr0a.write(|w| w.bits(125));
     timer.tccr0b.write(|w| w.cs0().prescale_1024());
 
-    loop {
-        // Send test data
-        // if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-        //     uart.send(DEVICE_ID).unwrap();
-        //     uart.send(0x01).unwrap();
-        //     uart.send(0x02).unwrap();
-        // }
-
-        // Send test data
-        uart.send(b'H').unwrap();
-        uart.send(b'e').unwrap();
-        uart.send(b'l').unwrap();
-        uart.send(b'l').unwrap();
-        uart.send(b'o').unwrap();
-        uart.send(b'\r').unwrap();
-        uart.send(b'\n').unwrap();
-
-        // // set the led high
-        // led.set_high();
-
-        // Wait for about 1 second
-        // for _ in 0..1000000 {
-        //     avr_device::asm::nop();
-        // }
-
-
-        // // Set pin high
-        // led.set_high();
-
-        // Wait for 1 second (64 timer overflows)
-        for _ in 0..64 {
-            while timer.tcnt0.read().bits() < 124 {
-                avr_device::asm::sleep();
-            }
-            timer.tcnt0.write(|w| w.bits(0)); // Reset the counter
-        }
-
-        // // 8000000 / 1024 = 7812.5 / 125 = 62.5 per second
-
-        // // Set pin low
-        // led.set_low();
-
-        // // Wait for another 1 second
-        // for _ in 0..64 {
-        //     while timer.tcnt0.read().bits() < 124 {
-        //         avr_device::asm::sleep();
-        //     }
-        //     timer.tcnt0.write(|w| w.bits(0)); // Reset the counter
-        // }
-
-        // avr_device::asm::sleep();
-    }
+    // uart.send(b'2').unwrap();
 
     // // Set up PWM for servos and light
     // // let mut pwm = Pwm::new(dp.TC0, dp.TC1);
@@ -120,57 +93,136 @@ fn main() -> ! {
     // let mut tilt_servo = pins.pb1.into_output().into_pwm(&timer0);
     // let _light = pins.pb2.into_output();
 
-    // unsafe { avr_device::interrupt::enable() };
+    // dp.USI.usicr.write(|w| w.usisie().set_bit());
 
-    // loop {
-    //     free(|cs| {
-    //         let mut buffer = BUFFER.borrow(cs).borrow_mut();
-    //         if buffer.len() == 3 {
-    //             let id_and_light = buffer.pop().unwrap();
-    //             let rotation = buffer.pop().unwrap();
-    //             let tilt = buffer.pop().unwrap();
+    // Enable Pin Change Interrupt for PB3
+    dp.EXINT.gimsk.modify(|_, w| w.pcie().set_bit());
+    dp.EXINT.pcmsk.modify(|_, w| w.pcint3().set_bit());
 
-    //             let id = (id_and_light & 0xF0) >> 4;
-    //             let light_state = id_and_light & 0x0F;
+    unsafe { avr_device::interrupt::enable() };
 
-    //             // Check if this message is for this device
-    //             if id == DEVICE_ID {
-    //                 // Process the message
-    //                 // base_servo.set_duty(rotation);
-    //                 // tilt_servo.set_duty(tilt);
-    //                 // Handle light state
-    //                 if light_state == 0x01 {
-    //                     // Turn light on
-    //                 } else {
-    //                     // Turn light off
-    //                 }
-    //             }
+    // uart.send(b'3').unwrap();
 
-    //             // Echo back the received data
+    loop {
+        // uart.send(b'4').unwrap();
 
-    //             if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-    //                 uart.send(rotation).unwrap();
-    //                 uart.send(tilt).unwrap();
-    //                 uart.send(light_state).unwrap();
-    //             }
-    //         }
-    //     });
+        // Borrow uart and write that a sleep will happen
+        // free(|cs| {
+        //     if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+        //         uart.send(b'S').unwrap();
+        //         uart.send(b'T').unwrap();
+        //         uart.send(b'A').unwrap();
+        //         uart.send(b'R').unwrap();
+        //         uart.send(b'T').unwrap();
+        //         uart.send(b'\n').unwrap();
+        //         uart.send(b'\r').unwrap();
+        //     }
+        // });
 
-    //     // Sleep to save power
-    //     avr_device::asm::sleep();
-    // }
+        // free(|cs| {
+        //     let mut buffer = BUFFER.borrow(cs).borrow_mut();
+        //     if buffer.len() == 3 {
+        //         let id_and_light = buffer.pop().unwrap();
+        //         let rotation = buffer.pop().unwrap();
+        //         let tilt = buffer.pop().unwrap();
+
+        //         let _id = (id_and_light & 0xF0) >> 4;
+        //         let light_state = id_and_light & 0x0F;
+
+        //         // // Check if this message is for this device
+        //         // if id == DEVICE_ID {
+        //         //     // Process the message
+        //         //     // base_servo.set_duty(rotation);
+        //         //     // tilt_servo.set_duty(tilt);
+        //         //     // Handle light state
+        //         //     if light_state == 0x01 {
+        //         //         // Turn light on
+        //         //     } else {
+        //         //         // Turn light off
+        //         //     }
+        //         // }
+
+        //         // Echo back the received data
+
+        //         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+        //             uart.send(rotation).unwrap();
+        //             uart.send(tilt).unwrap();
+        //             uart.send(light_state).unwrap();
+        //         }
+        //     }
+        // });
+
+        // Borrow uart and write that a sleep will happen
+        // free(|cs| {
+        //     if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+        //         uart.send(b'S').unwrap();
+        //         uart.send(b'L').unwrap();
+        //         uart.send(b'E').unwrap();
+        //         uart.send(b'E').unwrap();
+        //         uart.send(b'P').unwrap();
+        //         uart.send(b'\n').unwrap();
+        //         uart.send(b'\r').unwrap();
+        //     }
+        // });
+
+        // Sleep to save power
+        avr_device::asm::sleep();
+    }
 }
 
-// #[avr_device::interrupt(attiny85)]
-// fn USI_START() {
-//     free(|cs| {
-//         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-//             if let Ok(byte) = uart.receive() {
-//                 BUFFER.borrow(cs).borrow_mut().push(byte);
-//             }
-//         }
-//     });
-// }
+// Change the interrupt handler to PCINT0
+#[avr_device::interrupt(attiny85)]
+fn PCINT0() {
+    free(|cs| {
+        if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+            // uart.send(b'I').unwrap(); // Send 'I' to indicate interrupt triggered
+            // uart.send(b'N').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b'T').unwrap();
+            // uart.send(b':').unwrap();
+            // uart.send(b' ').unwrap();
+
+            match uart.receive() {
+                Ok(byte) => {
+                    BUFFER.borrow(cs).borrow_mut().push(byte);
+                    uart.send(byte).unwrap(); // Echo received byte
+                }
+                Err(_) => {
+                    uart.send(b'E').unwrap(); // Send 'E' if error in receiving
+                    uart.send(b'R').unwrap();
+                    uart.send(b'R').unwrap();
+                }
+            }
+            // uart.send(b'\r').unwrap();
+            // uart.send(b'\n').unwrap();
+        }
+    });
+}
 
 // - When recieving UART, need to throw away data if didn't get 4 in a certain
 // amount of data
