@@ -2,7 +2,7 @@
 #![no_std]
 #![feature(abi_avr_interrupt)]
 
-use attiny_hal::port::mode::{Floating, Input, Output};
+use attiny_hal::port::mode::Output;
 use attiny_hal::port::{Pin, PB0, PB1, PB2};
 use avr_device::interrupt::{free, Mutex};
 use core::cell::{Cell, RefCell};
@@ -114,10 +114,10 @@ fn main() -> ! {
             let mut buffer = BUFFER.borrow(cs).borrow_mut();
 
             if buffer.len() >= 3 {
-                let result = (|| {
-                    let id_and_light = buffer.pop().ok_or("Failed to pop id_and_light")?;
-                    let rotation = buffer.pop().ok_or("Failed to pop rotation")?.clamp(0, 180);
-                    let tilt = buffer.pop().ok_or("Failed to pop tilt")?.clamp(0, 180);
+                let result: Result<(), ()> = (|| {
+                    let id_and_light = buffer.pop().ok_or(())?;
+                    let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
+                    let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
 
                     let _id = (id_and_light & 0xF0) >> 4;
                     let light_state = id_and_light & 0x0F != 0;
@@ -138,10 +138,8 @@ fn main() -> ! {
                     Ok(())
                 })();
 
-                if let Err(error) = result {
-                    // Log the error if possible
-                    // clear_buffer(&mut buffer);
-                    buffer.clear(); // Assuming we add a clear() method to the Buffer struct
+                if let Err(_error) = result {
+                    buffer.clear();
                 }
             }
         });
