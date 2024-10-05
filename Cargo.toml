@@ -8,12 +8,10 @@ edition = "2021"
 # rt = ["attiny85-hal/rt"]
 
 [dependencies]
-# A panic handler is needed.  This is a crate with the most basic one.
-# The `leonardo-panic` example shows a more elaborate version.
 panic-halt = "0.2.0"
 avr-device = { version = "0.6.0", features = ["attiny85", "rt"] }
 attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"] }
-embedded-hal = { version = "0.2.7", features = ["unproven"] }
+embedded-hal = { version = "0.2.7" }
 bitbang-hal = { path = "../bitbang-hal" }
 nb = "1.1.0"
 void = { version = "1.0.2", default-features = false }

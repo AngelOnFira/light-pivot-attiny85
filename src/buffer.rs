@@ -1,4 +1,4 @@
-const BUFFER_SIZE: usize = 32;
+const BUFFER_SIZE: usize = 8;
 
 pub struct Buffer {
     data: [u8; BUFFER_SIZE],
@@ -39,5 +39,10 @@ impl Buffer {
         } else {
             BUFFER_SIZE - self.read_idx + self.write_idx
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.read_idx = 0;
+        self.write_idx = 0;
     }
 }
