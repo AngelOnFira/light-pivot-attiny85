@@ -34,7 +34,7 @@ impl CountDown for Timer {
         let ticks = count.into();
         self.inner
             .tccr1
-            .write(|w| w.cs1().prescale_8().ctc1().set_bit());
+            .write(|w| w.cs1().prescale_8().ctc1().clear_bit());
         // Set compare value
         self.inner.ocr1a.write(|w| w.bits(ticks));
         // Clear counter

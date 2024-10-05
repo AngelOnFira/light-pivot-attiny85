@@ -80,10 +80,10 @@ fn main() -> ! {
     // uart.send(b'1').unwrap();
 
     // Set up a timer to set pin high for 1 second, then low for 1 second
-    let mut timer = dp.TC0;
-    timer.tccr0a.write(|w| w.wgm0().ctc());
-    timer.ocr0a.write(|w| w.bits(125));
-    timer.tccr0b.write(|w| w.cs0().prescale_1024());
+    // let mut timer = dp.TC0;
+    // timer.tccr0a.write(|w| w.wgm0().ctc());
+    // timer.ocr0a.write(|w| w.bits(125));
+    // timer.tccr0b.write(|w| w.cs0().prescale_1024());
 
     // uart.send(b'2').unwrap();
 
@@ -119,38 +119,47 @@ fn main() -> ! {
         //     }
         // });
 
-        // free(|cs| {
-        //     let mut buffer = BUFFER.borrow(cs).borrow_mut();
-        //     if buffer.len() == 3 {
-        //         let id_and_light = buffer.pop().unwrap();
-        //         let rotation = buffer.pop().unwrap();
-        //         let tilt = buffer.pop().unwrap();
+        free(|cs| {
+            // let mut buffer = BUFFER.borrow(cs).borrow_mut();
 
-        //         let _id = (id_and_light & 0xF0) >> 4;
-        //         let light_state = id_and_light & 0x0F;
+            // // If the buffer is greater than 1, pop and send the first byte
+            // if buffer.len() > 1 {
+            //     let byte = buffer.pop().unwrap();
+            //     if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+            //         uart.send(byte).unwrap();
+            //     }
+            // }
 
-        //         // // Check if this message is for this device
-        //         // if id == DEVICE_ID {
-        //         //     // Process the message
-        //         //     // base_servo.set_duty(rotation);
-        //         //     // tilt_servo.set_duty(tilt);
-        //         //     // Handle light state
-        //         //     if light_state == 0x01 {
-        //         //         // Turn light on
-        //         //     } else {
-        //         //         // Turn light off
-        //         //     }
-        //         // }
+            // if buffer.len() == 3 {
+            //     let id_and_light = buffer.pop().unwrap();
+            //     let rotation = buffer.pop().unwrap();
+            //     let tilt = buffer.pop().unwrap();
 
-        //         // Echo back the received data
+            //     let _id = (id_and_light & 0xF0) >> 4;
+            //     let light_state = id_and_light & 0x0F;
 
-        //         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-        //             uart.send(rotation).unwrap();
-        //             uart.send(tilt).unwrap();
-        //             uart.send(light_state).unwrap();
-        //         }
-        //     }
-        // });
+            //     // // Check if this message is for this device
+            //     // if id == DEVICE_ID {
+            //     //     // Process the message
+            //     //     // base_servo.set_duty(rotation);
+            //     //     // tilt_servo.set_duty(tilt);
+            //     //     // Handle light state
+            //     //     if light_state == 0x01 {
+            //     //         // Turn light on
+            //     //     } else {
+            //     //         // Turn light off
+            //     //     }
+            //     // }
+
+            //     // Echo back the received data
+
+            //     if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+            //         uart.send(rotation).unwrap();
+            //         uart.send(tilt).unwrap();
+            //         uart.send(light_state).unwrap();
+            //     }
+            // }
+        });
 
         // Borrow uart and write that a sleep will happen
         // free(|cs| {
@@ -175,50 +184,21 @@ fn main() -> ! {
 fn PCINT0() {
     free(|cs| {
         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-            // uart.send(b'I').unwrap(); // Send 'I' to indicate interrupt triggered
-            // uart.send(b'N').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b'T').unwrap();
-            // uart.send(b':').unwrap();
-            // uart.send(b' ').unwrap();
-
             match uart.receive() {
                 Ok(byte) => {
                     BUFFER.borrow(cs).borrow_mut().push(byte);
                     uart.send(byte).unwrap(); // Echo received byte
                 }
                 Err(_) => {
-                    uart.send(b'E').unwrap(); // Send 'E' if error in receiving
-                    uart.send(b'R').unwrap();
-                    uart.send(b'R').unwrap();
+                    // uart.send(b'E').unwrap(); // Send 'E' if error in receiving
+                    // uart.send(b'R').unwrap();
+                    // uart.send(b'R').unwrap();
                 }
             }
-            // uart.send(b'\r').unwrap();
+            // Print HIT
+            // uart.send(b'H').unwrap();
+            // uart.send(b'I').unwrap();
+            // uart.send(b'T').unwrap();
             // uart.send(b'\n').unwrap();
         }
     });
