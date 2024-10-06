@@ -8,12 +8,12 @@ edition = "2021"
 # rt = ["attiny85-hal/rt"]
 
 [dependencies]
-panic-halt = "0.2.0"
-avr-device = { version = "0.6.0", features = ["attiny85", "rt"] }
-attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"] }
-embedded-hal = { version = "0.2.7" }
-bitbang-hal = { path = "../bitbang-hal" }
-nb = "1.1.0"
+panic-halt = { version = "0.2.0", default-features = false }
+avr-device = { version = "0.6.0", features = ["attiny85", "rt"], default-features = false }
+attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"], default-features = false }
+embedded-hal = { version = "0.2.7", default-features = false }
+bitbang-hal = { path = "../bitbang-hal", default-features = false }
+nb = { version = "1.1.0", default-features = false }
 void = { version = "1.0.2", default-features = false }
 
 # Configure the build for minimal size
@@ -29,3 +29,4 @@ codegen-units = 1
 lto = "thin"
 opt-level = "s"
 debug-assertions = false
+strip = true

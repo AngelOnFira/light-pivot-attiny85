@@ -36,6 +36,23 @@ static BASE_SERVO: Mutex<RefCell<Option<Pin<Output, PB0>>>> = Mutex::new(RefCell
 static TILT_SERVO: Mutex<RefCell<Option<Pin<Output, PB1>>>> = Mutex::new(RefCell::new(None));
 static LIGHT: Mutex<RefCell<Option<Pin<Output, PB2>>>> = Mutex::new(RefCell::new(None));
 
+// Add these new static variables
+static DEBUG_BASE: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
+static DEBUG_TILT: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
+static DEBUG_LIGHT: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
+
+// Add this new static variable
+static ALIVE_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
+
+// Add this new static variable
+static LIGHT_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
+
+// Add these new static variables
+static SERVO_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
+
+// Add this new static variable
+static LIFETIME_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
+
 #[avr_device::entry]
 fn main() -> ! {
     let dp = attiny_hal::Peripherals::take().unwrap();
@@ -47,11 +64,15 @@ fn main() -> ! {
     dp.CPU.osccal.write(|w| w.bits(new_value));
 
     // Set up UART
-    let uart = SoftwareUart::new(
+    let mut uart = SoftwareUart::new(
         dp.TC1,
-        pins.pb3.into_floating_input(),
-        pins.pb4.into_output_high(),
+        pins.pb4.into_floating_input(),
+        pins.pb3.into_output_high(),
     );
+
+    // Write hello world to the UART
+    uart.send_string("Hello, world!\r\n").unwrap();
+
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 
     // Set up servo pins
@@ -72,7 +93,7 @@ fn main() -> ! {
 
     // Set up Timer0 for PWM
     dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
-    dp.TC0.tccr0b.write(|w| w.cs0().prescale_8());
+    dp.TC0.tccr0b.write(|w| w.cs0().direct());
     dp.TC0.ocr0a.write(|w| w.bits(79));
 
     // Timer0 Setup Math:
@@ -103,6 +124,15 @@ fn main() -> ! {
     //
     // This setup allows for a precision of 1.8 degrees in servo positioning.
 
+    // Initialize servos to a known position
+    set_servo_position(Servo::Base, 90);
+    set_servo_position(Servo::Tilt, 90);
+
+    // Add a delay before starting the main loop
+    for _ in 0..1000 {
+        avr_device::asm::nop();
+    }
+
     // Enable Timer0 Compare Match A interrupt
     dp.TC0.timsk.write(|w| w.ocie0a().set_bit());
 
@@ -122,9 +152,9 @@ fn main() -> ! {
                     let _id = (id_and_light & 0xF0) >> 4;
                     let light_state = id_and_light & 0x0F != 0;
 
-                    // Set servo positions
-                    set_servo_position(Servo::Base, rotation);
-                    set_servo_position(Servo::Tilt, tilt);
+                    // Comment out servo position setting
+                    // set_servo_position(Servo::Base, rotation);
+                    // set_servo_position(Servo::Tilt, tilt);
 
                     // Handle light state
                     if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
@@ -135,11 +165,88 @@ fn main() -> ! {
                         }
                     }
 
+                    // Update debug variables
+                    DEBUG_BASE.borrow(cs).set(rotation);
+                    DEBUG_TILT.borrow(cs).set(tilt);
+                    DEBUG_LIGHT.borrow(cs).set(light_state);
+
                     Ok(())
                 })();
 
                 if let Err(_error) = result {
                     buffer.clear();
+                }
+
+            }
+
+            // Check if 1 second has passed (100,000 * 10μs = 1 second)
+            if ALIVE_COUNTER.borrow(cs).get() >= 100_000 {
+                // Reset the counter
+                ALIVE_COUNTER.borrow(cs).set(0);
+
+                // Increment the lifetime counter
+                let lifetime = LIFETIME_COUNTER.borrow(cs).get();
+                LIFETIME_COUNTER.borrow(cs).set(lifetime + 1);
+
+                // Toggle the light state
+                let new_light_state = !LIGHT_STATE.borrow(cs).get();
+                LIGHT_STATE.borrow(cs).set(new_light_state);
+
+                // Toggle the servo state
+                let new_servo_state = !SERVO_STATE.borrow(cs).get();
+                SERVO_STATE.borrow(cs).set(new_servo_state);
+
+                // Update the light
+                if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+                    if new_light_state {
+                        light.set_high();
+                    } else {
+                        light.set_low();
+                    }
+                }
+
+                // Update servo positions
+                if new_servo_state {
+                    set_servo_position(Servo::Base, 120);
+                    set_servo_position(Servo::Tilt, 120);
+                } else {
+                    set_servo_position(Servo::Base, 20);
+                    set_servo_position(Servo::Tilt, 20);
+                }
+
+                // Send "alive" message over UART
+                if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+                    uart.send_string("alive (").unwrap();
+                    // Send the lifetime counter value
+                    uart.send(LIFETIME_COUNTER.borrow(cs).get() as u8).unwrap();
+                    uart.send_string("s)\r\n").unwrap();
+
+                    uart.send_string(if new_light_state {
+                        "Light ON\r\n"
+                    } else {
+                        "Light OFF\r\n"
+                    })
+                    .unwrap();
+                    uart.send_string(if new_servo_state {
+                        "Servos at 120 degrees\r\n"
+                    } else {
+                        "Servos at 20 degrees\r\n"
+                    })
+                    .unwrap();
+
+                    // Send debug values
+                    uart.send_string("Base: ").unwrap();
+                    uart.send(DEBUG_BASE.borrow(cs).get()).unwrap();
+                    uart.send_string(" Tilt: ").unwrap();
+                    uart.send(DEBUG_TILT.borrow(cs).get()).unwrap();
+                    uart.send_string(" Light: ").unwrap();
+                    uart.send_string(if DEBUG_LIGHT.borrow(cs).get() {
+                        "ON"
+                    } else {
+                        "OFF"
+                    })
+                    .unwrap();
+                    uart.send_string("\r\n").unwrap();
                 }
             }
         });
@@ -166,8 +273,6 @@ fn PCINT0() {
 fn TIMER0_COMPA() {
     free(|cs| {
         let counter = COUNTER.borrow(cs).get();
-        COUNTER.borrow(cs).set(counter + 1);
-
         let servo_pulses = SERVO_PULSES.borrow(cs).borrow();
 
         if counter == 0 {
@@ -178,20 +283,30 @@ fn TIMER0_COMPA() {
             if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
                 tilt_servo.set_high();
             }
-        } else if counter == servo_pulses[0] {
-            // End of base servo pulse
-            if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
-                base_servo.set_low();
+        } else {
+            // Check and set servos low if their pulse duration has passed
+            if counter >= servo_pulses[0] {
+                if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
+                    base_servo.set_low();
+                }
             }
-        } else if counter == servo_pulses[1] {
-            // End of tilt servo pulse
-            if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
-                tilt_servo.set_low();
+            if counter >= servo_pulses[1] {
+                if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
+                    tilt_servo.set_low();
+                }
             }
-        } else if counter >= PWM_CYCLE {
-            // End of cycle
-            COUNTER.borrow(cs).set(0);
         }
+
+        // Increment or reset counter
+        if counter >= PWM_CYCLE - 1 {
+            COUNTER.borrow(cs).set(0);
+        } else {
+            COUNTER.borrow(cs).set(counter + 1);
+        }
+
+        // Increment the ALIVE_COUNTER
+        let alive_counter = ALIVE_COUNTER.borrow(cs).get();
+        ALIVE_COUNTER.borrow(cs).set(alive_counter + 1);
     });
 }
 

@@ -2,7 +2,7 @@ use attiny_hal::pac::TC1;
 use attiny_hal::port::mode::{Floating, Input, Output};
 use attiny_hal::port::{Pin, PB3, PB4};
 use attiny_hal::prelude::_embedded_hal_serial_Read;
-// use attiny_hal::prelude::_embedded_hal_serial_Write;
+use attiny_hal::prelude::_embedded_hal_serial_Write;
 use avr_device::asm::nop;
 use bitbang_hal::serial::{Error, Nop, Reset, Serial};
 use core::convert::Infallible;
@@ -11,7 +11,7 @@ use nb::Error::WouldBlock;
 use void::Void;
 
 pub struct SoftwareUart {
-    serial: Serial<Pin<Output, PB4>, Pin<Input<Floating>, PB3>, Timer>,
+    serial: Serial<Pin<Output, PB3>, Pin<Input<Floating>, PB4>, Timer>,
 }
 
 pub struct Timer {
@@ -67,7 +67,7 @@ impl Nop for Timer {
 }
 
 impl SoftwareUart {
-    pub fn new(tc1: TC1, rx: Pin<Input<Floating>, PB3>, tx: Pin<Output, PB4>) -> Self {
+    pub fn new(tc1: TC1, rx: Pin<Input<Floating>, PB4>, tx: Pin<Output, PB3>) -> Self {
         let mut timer = Timer::new(tc1);
         timer.start(104u8);
         let serial = Serial::new(tx, rx, timer);
@@ -79,7 +79,16 @@ impl SoftwareUart {
         self.serial.read()
     }
 
-    // pub fn send(&mut self, data: u8) -> nb::Result<(), Error<Infallible>> {
-    //     self.serial.write(data)
-    // }
+    pub fn send(&mut self, data: u8) -> nb::Result<(), Error<Infallible>> {
+        // self.serial.write(data)
+        Ok(())
+    }
+
+    pub fn send_string(&mut self, data: &str) -> nb::Result<(), Error<Infallible>> {
+        // for byte in data.as_bytes() {
+        //     self.serial.write(*byte)?;
+        // }
+
+        Ok(())
+    }
 }
