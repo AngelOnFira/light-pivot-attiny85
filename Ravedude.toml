@@ -2,4 +2,12 @@
 [general]
 open-console = true
 serial-baudrate = 19200
-board = "attiny85"
+
+[board]
+inherit = "attiny85"
+
+[board.avrdude]
+baudrate = 19200
+lfuse = "0xE2"
+hfuse = "0xDF"
+efuse = "0xFF"
