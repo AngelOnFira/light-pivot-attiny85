@@ -6,6 +6,7 @@ use attiny_hal::port::mode::Output;
 use attiny_hal::port::{Dynamic, Pin, PB0, PB1, PB2};
 use avr_device::interrupt::{free, Mutex};
 use core::cell::{Cell, RefCell};
+use core::marker::PhantomData;
 use panic_halt as _;
 
 mod buffer;
@@ -20,13 +21,39 @@ const TRIM_DURATION: u8 = 4;
 const SERVO_MIN: u16 = 1000; // Minimum pulse width in microseconds
 const SERVO_MAX: u16 = 2000; // Maximum pulse width in microseconds
 
-// Servo Sequencer State
-#[derive(Clone, Copy, PartialEq)]
-enum SequencerState {
-    WaitingToSetPinHigh,
-    WaitingFor512Mark,
-    WaitingToSetPinLow,
-    WaitingFor2048Mark,
+// New type definitions
+struct Motor0;
+struct Motor1;
+struct Idle;
+
+trait Motor {
+    const INDEX: usize;
+    type Next: Motor;
+}
+
+impl Motor for Motor0 {
+    const INDEX: usize = 0;
+    type Next = Motor1;
+}
+
+impl Motor for Motor1 {
+    const INDEX: usize = 1;
+    type Next = Idle;
+}
+
+impl Motor for Idle {
+    const INDEX: usize = 0; // This value doesn't matter for Idle
+    type Next = Motor0;
+}
+
+struct WaitingToSetPinHigh<M: Motor>(PhantomData<M>);
+struct WaitingFor512Mark<M: Motor>(PhantomData<M>);
+struct WaitingToSetPinLow<M: Motor>(PhantomData<M>);
+struct WaitingFor2048Mark<M: Motor>(PhantomData<M>);
+
+struct ServoController<State = WaitingToSetPinHigh<Motor0>> {
+    servos: [ServoEntry; MAX_SERVOS],
+    state: State,
 }
 
 // Servo Entry
@@ -40,23 +67,7 @@ struct ServoEntry {
 // Static variables
 static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
 static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
-static STATE: Mutex<Cell<SequencerState>> =
-    Mutex::new(Cell::new(SequencerState::WaitingToSetPinHigh));
-static SERVO_INDEX: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
-static SERVO_REGISTRY: Mutex<RefCell<[ServoEntry; MAX_SERVOS]>> = Mutex::new(RefCell::new([
-    ServoEntry {
-        pulse_length_in_ticks: 255,
-        pin: 0,
-        enabled: true,
-        slot_occupied: true,
-    },
-    ServoEntry {
-        pulse_length_in_ticks: 255,
-        pin: 1,
-        enabled: true,
-        slot_occupied: true,
-    },
-]));
+static SERVO_CONTROLLER: Mutex<RefCell<Option<ServoController>>> = Mutex::new(RefCell::new(None));
 static SERVO_PINS: Mutex<RefCell<[Option<Pin<Output, Dynamic>>; MAX_SERVOS]>> =
     Mutex::new(RefCell::new([None, None]));
 static LIGHT: Mutex<RefCell<Option<Pin<Output, PB2>>>> = Mutex::new(RefCell::new(None));
@@ -67,18 +78,132 @@ enum Servo {
     Tilt,
 }
 
+impl<State> ServoController<State> {
+    fn transition<NewState>(self, new_state: NewState) -> ServoController<NewState> {
+        ServoController {
+            servos: self.servos,
+            state: new_state,
+        }
+    }
+}
+
+impl<M: Motor> ServoController<WaitingToSetPinHigh<M>> {
+    fn update_set_pin_high(
+        mut self,
+        servo_pins: &mut [Option<Pin<Output, Dynamic>>; MAX_SERVOS],
+    ) -> ServoController<WaitingFor512Mark<M>> {
+        if self.servos[M::INDEX].enabled {
+            if let Some(servo_pin) = &mut servo_pins[M::INDEX] {
+                servo_pin.set_high();
+            }
+        }
+        unsafe {
+            (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0));
+            (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits(64u8.saturating_sub(TRIM_DURATION)));
+        }
+        self.transition(WaitingFor512Mark(PhantomData))
+    }
+}
+
+impl<M: Motor> ServoController<WaitingFor512Mark<M>> {
+    fn update_wait_512_mark(self) -> ServoController<WaitingToSetPinLow<M>> {
+        unsafe {
+            (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits(self.servos[M::INDEX].pulse_length_in_ticks));
+            (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0));
+            if self.servos[M::INDEX].pulse_length_in_ticks == 0 {
+                (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0xFF));
+            } else {
+                (*attiny_hal::pac::TC0::ptr()).tifr.write(|w| w.ocf0a().set_bit());
+            }
+        }
+        self.transition(WaitingToSetPinLow(PhantomData))
+    }
+}
+
+impl<M: Motor> ServoController<WaitingToSetPinLow<M>> {
+    fn update_set_pin_low(
+        self,
+        servo_pins: &mut [Option<Pin<Output, Dynamic>>; MAX_SERVOS],
+    ) -> ServoController<WaitingFor2048Mark<M>> {
+        if self.servos[M::INDEX].enabled {
+            if let Some(servo_pin) = &mut servo_pins[M::INDEX] {
+                servo_pin.set_low();
+            }
+        }
+        let total_ticks = 64u16.saturating_add(self.servos[M::INDEX].pulse_length_in_ticks as u16);
+        unsafe {
+            if total_ticks > 255 {
+                (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits((512u16.saturating_sub(total_ticks)) as u8));
+            } else {
+                (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits((255u16.saturating_sub(total_ticks)) as u8));
+            }
+            (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0));
+        }
+        self.transition(WaitingFor2048Mark(PhantomData))
+    }
+}
+
+impl<M: Motor> ServoController<WaitingFor2048Mark<M>> {
+    fn update_wait_2048_mark(self) -> ServoController<WaitingToSetPinHigh<M::Next>> {
+        unsafe {
+            (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0));
+            (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits(255));
+        }
+        self.transition(WaitingToSetPinHigh(PhantomData))
+    }
+}
+
+impl ServoController<WaitingToSetPinHigh<Idle>> {
+    fn new() -> Self {
+        Self {
+            servos: [
+                ServoEntry {
+                    pulse_length_in_ticks: 255,
+                    pin: 0,
+                    enabled: true,
+                    slot_occupied: true,
+                },
+                ServoEntry {
+                    pulse_length_in_ticks: 255,
+                    pin: 1,
+                    enabled: true,
+                    slot_occupied: true,
+                },
+            ],
+            state: WaitingToSetPinHigh(PhantomData),
+        }
+    }
+
+    fn update_idle(self) -> ServoController<WaitingToSetPinHigh<Motor0>> {
+        // Here you can set a longer timer if needed
+        unsafe {
+            (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0));
+            (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits(255)); // Adjust this value for a longer idle period
+        }
+        self.transition(WaitingToSetPinHigh(PhantomData))
+    }
+
+    fn set_servo_position(&mut self, servo: Servo, degrees: u8) {
+        let pulse = map_degrees_to_pulse(degrees);
+        let index = match servo {
+            Servo::Base => 0,
+            Servo::Tilt => 1,
+        };
+        self.servos[index].pulse_length_in_ticks = (pulse / 8) as u8;
+    }
+}
+
 #[avr_device::entry]
 fn main() -> ! {
     let dp = attiny_hal::Peripherals::take().unwrap();
     let pins = attiny_hal::pins!(dp);
 
-    set_servo_position(Servo::Base, 90);
-    set_servo_position(Servo::Tilt, 90);
-
-    // // Adjust OSCCAL
-    // let current_value = dp.CPU.osccal.read().bits();
-    // let new_value = (current_value as i16 + OSCCAL_ADJUSTMENT).clamp(0, 255) as u8;
-    // dp.CPU.osccal.write(|w| w.bits(new_value));
+    // Initialize ServoController
+    free(|cs| {
+        SERVO_CONTROLLER
+            .borrow(cs)
+            .replace(Some(ServoController::new()));
+    });
 
     // Set up UART
     let mut uart = SoftwareUart::new(
@@ -88,7 +213,7 @@ fn main() -> ! {
     );
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 
-    // // Set up servo pins
+    // Set up servo pins
     let base_servo = pins.pb0.into_output().downgrade();
     let tilt_servo = pins.pb1.into_output().downgrade();
     free(|cs| {
@@ -105,12 +230,9 @@ fn main() -> ! {
     dp.EXINT.pcmsk.modify(|_, w| w.pcint3().set_bit());
 
     // Set up Timer0 for PWM
-    // dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
     dp.TC0.tccr0b.write(|w| w.cs0().prescale_64());
     dp.TC0.ocr0a.write(|w| w.bits(255));
     dp.TC0.timsk.write(|w| w.ocie0a().set_bit());
-
-
 
     // Enable global interrupts
     unsafe { avr_device::interrupt::enable() };
@@ -138,92 +260,18 @@ fn PCINT0() {
 #[avr_device::interrupt(attiny85)]
 fn TIMER0_COMPA() {
     free(|cs| {
-        let mut state = STATE.borrow(cs).get();
-        let mut servo_index = SERVO_INDEX.borrow(cs).get();
-        let mut servo_registry = SERVO_REGISTRY.borrow(cs).borrow_mut();
+        let mut servo_controller = SERVO_CONTROLLER.borrow(cs).borrow_mut();
         let mut servo_pins = SERVO_PINS.borrow(cs).borrow_mut();
 
-        match state {
-            SequencerState::WaitingToSetPinHigh => {
-                servo_index = (servo_index + 1) % MAX_SERVOS as u8;
-                if servo_registry[servo_index as usize].enabled {
-                    if let Some(servo_pin) = &mut servo_pins[servo_index as usize] {
-                        servo_pin.set_high();
-                    }
-                }
-                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
-                unsafe {
-                    (*attiny_hal::pac::TC0::ptr())
-                        .ocr0a
-                        .write(|w| w.bits(64u8.saturating_sub(TRIM_DURATION)))
-                };
-                state = SequencerState::WaitingFor512Mark;
-            }
-            SequencerState::WaitingFor512Mark => {
-                unsafe {
-                    (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| {
-                        w.bits(servo_registry[servo_index as usize].pulse_length_in_ticks)
-                    })
-                };
-                state = SequencerState::WaitingToSetPinLow;
-                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
-                if servo_registry[servo_index as usize].pulse_length_in_ticks == 0 {
-                    unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0xFF)) };
-                } else {
-                    unsafe {
-                        (*attiny_hal::pac::TC0::ptr())
-                            .tifr
-                            .write(|w| w.ocf0a().set_bit())
-                    };
-                }
-            }
-            SequencerState::WaitingToSetPinLow => {
-                if servo_registry[servo_index as usize].enabled {
-                    if let Some(servo_pin) = &mut servo_pins[servo_index as usize] {
-                        servo_pin.set_low();
-                    }
-                }
-                let total_ticks = 64u16.saturating_add(
-                    servo_registry[servo_index as usize].pulse_length_in_ticks as u16,
-                );
-                if total_ticks > 255 {
-                    state = SequencerState::WaitingToSetPinHigh;
-                    unsafe {
-                        (*attiny_hal::pac::TC0::ptr())
-                            .ocr0a
-                            .write(|w| w.bits((512u16.saturating_sub(total_ticks)) as u8))
-                    };
-                } else {
-                    state = SequencerState::WaitingFor2048Mark;
-                    unsafe {
-                        (*attiny_hal::pac::TC0::ptr())
-                            .ocr0a
-                            .write(|w| w.bits((255u16.saturating_sub(total_ticks)) as u8))
-                    };
-                }
-                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
-            }
-            SequencerState::WaitingFor2048Mark => {
-                state = SequencerState::WaitingToSetPinHigh;
-                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
-                unsafe { (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits(255)) };
-            }
+        if let Some(controller) = servo_controller.take() {
+            let new_controller = match controller.state {
+                WaitingToSetPinHigh(_) => ServoController::update_set_pin_high(controller, &mut servo_pins),
+                WaitingFor512Mark(_) => ServoController::update_wait_512_mark(controller),
+                WaitingToSetPinLow(_) => ServoController::update_set_pin_low(controller, &mut servo_pins),
+                WaitingFor2048Mark(_) => ServoController::update_wait_2048_mark(controller),
+            };
+            *servo_controller = Some(new_controller);
         }
-
-        STATE.borrow(cs).set(state);
-        SERVO_INDEX.borrow(cs).set(servo_index);
-    });
-}
-
-fn set_servo_position(servo: Servo, degrees: u8) {
-    let pulse = map_degrees_to_pulse(degrees);
-    free(|cs| {
-        let mut servo_registry = SERVO_REGISTRY.borrow(cs).borrow_mut();
-        let index = match servo {
-            Servo::Base => 0,
-            Servo::Tilt => 1,
-        };
-        servo_registry[index].pulse_length_in_ticks = (pulse / 8) as u8;
     });
 }
 
