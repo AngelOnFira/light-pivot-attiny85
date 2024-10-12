@@ -1,9 +1,9 @@
-#![no_main]
 #![no_std]
+#![no_main]
 #![feature(abi_avr_interrupt)]
 
 use attiny_hal::port::mode::Output;
-use attiny_hal::port::{Pin, PB0, PB1, PB2};
+use attiny_hal::port::{Dynamic, Pin, PB0, PB1, PB2};
 use avr_device::interrupt::{free, Mutex};
 use core::cell::{Cell, RefCell};
 use panic_halt as _;
@@ -14,57 +14,71 @@ mod uart;
 use buffer::Buffer;
 use uart::SoftwareUart;
 
-// Define constants
-const PWM_CYCLE: u16 = 2000; // 20ms cycle for 50Hz (2000 * 10μs)
-const SERVO_MIN: u16 = 100; // 1ms (100 * 10μs)
-const SERVO_MAX: u16 = 200; // 2ms (200 * 10μs)
-const OSCCAL_ADJUSTMENT: i16 = -2;
+// Constants
+const MAX_SERVOS: usize = 2;
+const TRIM_DURATION: u8 = 4;
+const SERVO_MIN: u16 = 1000; // Minimum pulse width in microseconds
+const SERVO_MAX: u16 = 2000; // Maximum pulse width in microseconds
 
-// Define Servo enum
+// Servo Sequencer State
+#[derive(Clone, Copy, PartialEq)]
+enum SequencerState {
+    WaitingToSetPinHigh,
+    WaitingFor512Mark,
+    WaitingToSetPinLow,
+    WaitingFor2048Mark,
+}
+
+// Servo Entry
+struct ServoEntry {
+    pulse_length_in_ticks: u8,
+    pin: u8,
+    enabled: bool,
+    slot_occupied: bool,
+}
+
+// Static variables
+static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
+static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
+static STATE: Mutex<Cell<SequencerState>> =
+    Mutex::new(Cell::new(SequencerState::WaitingToSetPinHigh));
+static SERVO_INDEX: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
+static SERVO_REGISTRY: Mutex<RefCell<[ServoEntry; MAX_SERVOS]>> = Mutex::new(RefCell::new([
+    ServoEntry {
+        pulse_length_in_ticks: 255,
+        pin: 0,
+        enabled: true,
+        slot_occupied: true,
+    },
+    ServoEntry {
+        pulse_length_in_ticks: 255,
+        pin: 1,
+        enabled: true,
+        slot_occupied: true,
+    },
+]));
+static SERVO_PINS: Mutex<RefCell<[Option<Pin<Output, Dynamic>>; MAX_SERVOS]>> =
+    Mutex::new(RefCell::new([None, None]));
+static LIGHT: Mutex<RefCell<Option<Pin<Output, PB2>>>> = Mutex::new(RefCell::new(None));
+
 #[derive(Clone, Copy)]
 enum Servo {
     Base,
     Tilt,
 }
 
-// Static variables
-static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
-static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
-static COUNTER: Mutex<Cell<u16>> = Mutex::new(Cell::new(0));
-static SERVO_PULSES: Mutex<RefCell<[u16; 2]>> = Mutex::new(RefCell::new([SERVO_MIN; 2]));
-static BASE_SERVO: Mutex<RefCell<Option<Pin<Output, PB0>>>> = Mutex::new(RefCell::new(None));
-static TILT_SERVO: Mutex<RefCell<Option<Pin<Output, PB1>>>> = Mutex::new(RefCell::new(None));
-static LIGHT: Mutex<RefCell<Option<Pin<Output, PB2>>>> = Mutex::new(RefCell::new(None));
-
-// Add these new static variables
-static DEBUG_BASE: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
-static DEBUG_TILT: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
-static DEBUG_LIGHT: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
-
-// Add this new static variable
-static ALIVE_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
-
-// Add this new static variable
-static LIGHT_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
-
-// Add these new static variables
-static SERVO_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
-
-// Add this new static variable
-static LIFETIME_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
-
-// Add this new static variable
-static TOGGLE_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
-
 #[avr_device::entry]
 fn main() -> ! {
     let dp = attiny_hal::Peripherals::take().unwrap();
     let pins = attiny_hal::pins!(dp);
 
-    // Adjust OSCCAL
-    let current_value = dp.CPU.osccal.read().bits();
-    let new_value = (current_value as i16 + OSCCAL_ADJUSTMENT).clamp(0, 255) as u8;
-    dp.CPU.osccal.write(|w| w.bits(new_value));
+    set_servo_position(Servo::Base, 90);
+    set_servo_position(Servo::Tilt, 90);
+
+    // // Adjust OSCCAL
+    // let current_value = dp.CPU.osccal.read().bits();
+    // let new_value = (current_value as i16 + OSCCAL_ADJUSTMENT).clamp(0, 255) as u8;
+    // dp.CPU.osccal.write(|w| w.bits(new_value));
 
     // Set up UART
     let mut uart = SoftwareUart::new(
@@ -72,18 +86,14 @@ fn main() -> ! {
         pins.pb4.into_floating_input(),
         pins.pb3.into_output_high(),
     );
-
-    // Write hello world to the UART
-    uart.send_string("Hello, world!\r\n").unwrap();
-
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 
-    // Set up servo pins
-    let base_servo = pins.pb0.into_output();
-    let tilt_servo = pins.pb1.into_output();
+    // // Set up servo pins
+    let base_servo = pins.pb0.into_output().downgrade();
+    let tilt_servo = pins.pb1.into_output().downgrade();
     free(|cs| {
-        BASE_SERVO.borrow(cs).replace(Some(base_servo));
-        TILT_SERVO.borrow(cs).replace(Some(tilt_servo));
+        SERVO_PINS.borrow(cs).borrow_mut()[0] = Some(base_servo);
+        SERVO_PINS.borrow(cs).borrow_mut()[1] = Some(tilt_servo);
     });
 
     // Set up light pin
@@ -95,167 +105,19 @@ fn main() -> ! {
     dp.EXINT.pcmsk.modify(|_, w| w.pcint3().set_bit());
 
     // Set up Timer0 for PWM
-    dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
-    dp.TC0.tccr0b.write(|w| w.cs0().direct()); // Use prescaler of 8
-    dp.TC0.ocr0a.write(|w| w.bits(79)); // (8,000,000 / 8) / (99 + 1) = 10,000 Hz (100μs period)
-    
- 
-    // Timer0 Setup Math:
-    // Target frequency: 100 kHz (10μs period)
-    // ATtiny85 clock: 8 MHz
-    // Prescaler: 8
-    // OCR0A value: 79
-    //
-    // Timer frequency = (Clock frequency) / (Prescaler * (1 + OCR0A))
-    //                 = 8,000,000 / (8 * (1 + 79))
-    //                 = 8,000,000 / (8 * 80)
-    //                 = 1,000,000 / 80
-    //                 = 12,500 Hz
-    //
-    // This gives us a timer interrupt every 10μs (1/100,000 seconds)
-    //
-    // For 50 Hz PWM (20ms period):
-    // 20ms / 10μs = 2000 steps per PWM cycle
-    //
-    // Servo pulse width range: 1ms to 2ms
-    // 1ms / 10μs = 100 steps
-    // 2ms / 10μs = 200 steps
-    //
-    // Total steps for servo range: 200 - 100 = 100 steps
-    //
-    // Degree precision:
-    // 180 degrees / 100 steps = 1.8 degrees per step
-    //
-    // This setup allows for a precision of 1.8 degrees in servo positioning.
-
-    // Initialize servos to a known position
-    set_servo_position(Servo::Base, 90);
-    set_servo_position(Servo::Tilt, 90);
-
-    // Add a delay before starting the main loop
-    for _ in 0..1000 {
-        avr_device::asm::nop();
-    }
-
-    // Enable Timer0 Compare Match A interrupt
+    // dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
+    dp.TC0.tccr0b.write(|w| w.cs0().prescale_64());
+    dp.TC0.ocr0a.write(|w| w.bits(255));
     dp.TC0.timsk.write(|w| w.ocie0a().set_bit());
+
+
 
     // Enable global interrupts
     unsafe { avr_device::interrupt::enable() };
 
+    // Main loop
     loop {
-        free(|cs| {
-            let mut buffer = BUFFER.borrow(cs).borrow_mut();
-
-            // if buffer.len() >= 3 {
-            //     let result: Result<(), ()> = (|| {
-            //         let id_and_light = buffer.pop().ok_or(())?;
-            //         let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
-            //         let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
-
-            //         let _id = (id_and_light & 0xF0) >> 4;
-            //         let light_state = id_and_light & 0x0F != 0;
-
-            //         // Comment out servo position setting
-            //         // set_servo_position(Servo::Base, rotation);
-            //         // set_servo_position(Servo::Tilt, tilt);
-
-            //         // Handle light state
-            //         if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-            //             if light_state {
-            //                 light.set_high();
-            //             } else {
-            //                 light.set_low();
-            //             }
-            //         }
-
-            //         // Update debug variables
-            //         DEBUG_BASE.borrow(cs).set(rotation);
-            //         DEBUG_TILT.borrow(cs).set(tilt);
-            //         DEBUG_LIGHT.borrow(cs).set(light_state);
-
-            //         Ok(())
-            //     })();
-
-            //     if let Err(_error) = result {
-            //         buffer.clear();
-            //     }
-
-            // }
-
-            // // Check if 1 second has passed (100,000 * 10μs = 1 second)
-            // if ALIVE_COUNTER.borrow(cs).get() >= 100_000 {
-            //     // Reset the counter
-            //     ALIVE_COUNTER.borrow(cs).set(0);
-
-            //     // Increment the lifetime counter
-            //     let lifetime = LIFETIME_COUNTER.borrow(cs).get();
-            //     LIFETIME_COUNTER.borrow(cs).set(lifetime + 1);
-
-            //     // Toggle the light state
-            //     let new_light_state = !LIGHT_STATE.borrow(cs).get();
-            //     LIGHT_STATE.borrow(cs).set(new_light_state);
-
-            //     // Toggle the servo state
-            //     let new_servo_state = !SERVO_STATE.borrow(cs).get();
-            //     SERVO_STATE.borrow(cs).set(new_servo_state);
-
-            //     // Update the light
-            //     if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-            //         if new_light_state {
-            //             light.set_high();
-            //         } else {
-            //             light.set_low();
-            //         }
-            //     }
-
-            //     // Update servo positions
-            //     if new_servo_state {
-            //         set_servo_position(Servo::Base, 120);
-            //         set_servo_position(Servo::Tilt, 120);
-            //     } else {
-            //         set_servo_position(Servo::Base, 20);
-            //         set_servo_position(Servo::Tilt, 20);
-            //     }
-
-            //     // Send "alive" message over UART
-            //     if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-            //         uart.send_string("alive (").unwrap();
-            //         // Send the lifetime counter value
-            //         uart.send(LIFETIME_COUNTER.borrow(cs).get() as u8).unwrap();
-            //         uart.send_string("s)\r\n").unwrap();
-
-            //         uart.send_string(if new_light_state {
-            //             "Light ON\r\n"
-            //         } else {
-            //             "Light OFF\r\n"
-            //         })
-            //         .unwrap();
-            //         uart.send_string(if new_servo_state {
-            //             "Servos at 120 degrees\r\n"
-            //         } else {
-            //             "Servos at 20 degrees\r\n"
-            //         })
-            //         .unwrap();
-
-            //         // Send debug values
-            //         uart.send_string("Base: ").unwrap();
-            //         uart.send(DEBUG_BASE.borrow(cs).get()).unwrap();
-            //         uart.send_string(" Tilt: ").unwrap();
-            //         uart.send(DEBUG_TILT.borrow(cs).get()).unwrap();
-            //         uart.send_string(" Light: ").unwrap();
-            //         uart.send_string(if DEBUG_LIGHT.borrow(cs).get() {
-            //             "ON"
-            //         } else {
-            //             "OFF"
-            //         })
-            //         .unwrap();
-            //         uart.send_string("\r\n").unwrap();
-            //     }
-            // }
-        });
-
-        // Sleep until interrupt
+        // Your main loop logic here
         avr_device::asm::sleep();
     }
 }
@@ -276,87 +138,103 @@ fn PCINT0() {
 #[avr_device::interrupt(attiny85)]
 fn TIMER0_COMPA() {
     free(|cs| {
-        let toggle_state = TOGGLE_STATE.borrow(cs).get();
-        
-        if toggle_state {
-            // Set both servos high
-            if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
-                base_servo.set_high();
+        let mut state = STATE.borrow(cs).get();
+        let mut servo_index = SERVO_INDEX.borrow(cs).get();
+        let mut servo_registry = SERVO_REGISTRY.borrow(cs).borrow_mut();
+        let mut servo_pins = SERVO_PINS.borrow(cs).borrow_mut();
+
+        match state {
+            SequencerState::WaitingToSetPinHigh => {
+                servo_index = (servo_index + 1) % MAX_SERVOS as u8;
+                if servo_registry[servo_index as usize].enabled {
+                    if let Some(servo_pin) = &mut servo_pins[servo_index as usize] {
+                        servo_pin.set_high();
+                    }
+                }
+                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
+                unsafe {
+                    (*attiny_hal::pac::TC0::ptr())
+                        .ocr0a
+                        .write(|w| w.bits(64u8.saturating_sub(TRIM_DURATION)))
+                };
+                state = SequencerState::WaitingFor512Mark;
             }
-            if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
-                tilt_servo.set_high();
+            SequencerState::WaitingFor512Mark => {
+                unsafe {
+                    (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| {
+                        w.bits(servo_registry[servo_index as usize].pulse_length_in_ticks)
+                    })
+                };
+                state = SequencerState::WaitingToSetPinLow;
+                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
+                if servo_registry[servo_index as usize].pulse_length_in_ticks == 0 {
+                    unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0xFF)) };
+                } else {
+                    unsafe {
+                        (*attiny_hal::pac::TC0::ptr())
+                            .tifr
+                            .write(|w| w.ocf0a().set_bit())
+                    };
+                }
             }
-        } else {
-            // Set both servos low
-            if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
-                base_servo.set_low();
+            SequencerState::WaitingToSetPinLow => {
+                if servo_registry[servo_index as usize].enabled {
+                    if let Some(servo_pin) = &mut servo_pins[servo_index as usize] {
+                        servo_pin.set_low();
+                    }
+                }
+                let total_ticks = 64u16.saturating_add(
+                    servo_registry[servo_index as usize].pulse_length_in_ticks as u16,
+                );
+                if total_ticks > 255 {
+                    state = SequencerState::WaitingToSetPinHigh;
+                    unsafe {
+                        (*attiny_hal::pac::TC0::ptr())
+                            .ocr0a
+                            .write(|w| w.bits((512u16.saturating_sub(total_ticks)) as u8))
+                    };
+                } else {
+                    state = SequencerState::WaitingFor2048Mark;
+                    unsafe {
+                        (*attiny_hal::pac::TC0::ptr())
+                            .ocr0a
+                            .write(|w| w.bits((255u16.saturating_sub(total_ticks)) as u8))
+                    };
+                }
+                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
             }
-            if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
-                tilt_servo.set_low();
+            SequencerState::WaitingFor2048Mark => {
+                state = SequencerState::WaitingToSetPinHigh;
+                unsafe { (*attiny_hal::pac::TC0::ptr()).tcnt0.write(|w| w.bits(0)) };
+                unsafe { (*attiny_hal::pac::TC0::ptr()).ocr0a.write(|w| w.bits(255)) };
             }
         }
 
-        // Toggle the state for the next interrupt
-        TOGGLE_STATE.borrow(cs).set(!toggle_state);
-
-        // Increment the ALIVE_COUNTER
-        let alive_counter = ALIVE_COUNTER.borrow(cs).get();
-        ALIVE_COUNTER.borrow(cs).set(alive_counter + 1);
+        STATE.borrow(cs).set(state);
+        SERVO_INDEX.borrow(cs).set(servo_index);
     });
 }
 
 fn set_servo_position(servo: Servo, degrees: u8) {
     let pulse = map_degrees_to_pulse(degrees);
     free(|cs| {
-        let mut servo_pulses = SERVO_PULSES.borrow(cs).borrow_mut();
-        match servo {
-            Servo::Base => servo_pulses[0] = pulse,
-            Servo::Tilt => servo_pulses[1] = pulse,
-        }
+        let mut servo_registry = SERVO_REGISTRY.borrow(cs).borrow_mut();
+        let index = match servo {
+            Servo::Base => 0,
+            Servo::Tilt => 1,
+        };
+        servo_registry[index].pulse_length_in_ticks = (pulse / 8) as u8;
     });
 }
 
 fn map_degrees_to_pulse(degrees: u8) -> u16 {
-    // First, calculate the range of pulse widths
-    let pulse_range = SERVO_MAX - SERVO_MIN;
-
-    // Then, calculate the proportion of the full range
-    let proportion = (degrees as u16 * pulse_range) / 180;
-
-    // Finally, add this to the minimum pulse width
-    SERVO_MIN + proportion
+    map(degrees as u16, 0, 180, SERVO_MIN, SERVO_MAX)
 }
-// Proof of correctness for map_degrees_to_pulse:
-// 1. When degrees = 0:
-//    pulse_range = SERVO_MAX - SERVO_MIN
-//    proportion = (0 * pulse_range) / 180 = 0
-//    result = SERVO_MIN + 0 = SERVO_MIN
-//    This correctly maps 0 degrees to the minimum pulse width.
-//
-// 2. When degrees = 180:
-//    pulse_range = SERVO_MAX - SERVO_MIN
-//    proportion = (180 * pulse_range) / 180 = pulse_range
-//    result = SERVO_MIN + pulse_range = SERVO_MAX
-//    This correctly maps 180 degrees to the maximum pulse width.
-//
-// 3. For any value between 0 and 180:
-//    The function performs linear interpolation between SERVO_MIN and SERVO_MAX.
-//    This ensures a proportional mapping of degrees to pulse width.
-//
-// 4. The use of u16 for the calculation prevents integer overflow:
-//    SERVO_MAX (200) - SERVO_MIN (100) = 100
-//    100 * 180 = 18000, which is well within the range of u16
-//
-// 5. The division by 180 is performed last in the proportion calculation:
-//    This approach minimizes rounding errors in the integer division.
-//
-// 6. Degree to pulse counter translation:
-//    - 0 degrees maps to SERVO_MIN (100 timer ticks = 1ms pulse)
-//    - 180 degrees maps to SERVO_MAX (200 timer ticks = 2ms pulse)
-//    - Any degree in between is linearly interpolated:
-//      For example, 90 degrees would map to:
-//      100 + (200 - 100) * 90 / 180 = 150 timer ticks = 1.5ms pulse
-//
-// Therefore, map_degrees_to_pulse correctly maps the full range of servo motion
-// (0 to 180 degrees) to the appropriate pulse widths (SERVO_MIN to SERVO_MAX),
-// with each degree corresponding to a specific number of timer ticks.
+
+fn map(x: u16, in_min: u16, in_max: u16, out_min: u16, out_max: u16) -> u16 {
+    let numerator = (x as u32)
+        .saturating_sub(in_min as u32)
+        .saturating_mul(out_max as u32 - out_min as u32);
+    let denominator = (in_max as u32).saturating_sub(in_min as u32);
+    (numerator / denominator).saturating_add(out_min as u32) as u16
+}
