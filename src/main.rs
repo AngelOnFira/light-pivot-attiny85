@@ -53,6 +53,9 @@ static SERVO_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
 // Add this new static variable
 static LIFETIME_COUNTER: Mutex<Cell<u32>> = Mutex::new(Cell::new(0));
 
+// Add this new static variable
+static TOGGLE_STATE: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
+
 #[avr_device::entry]
 fn main() -> ! {
     let dp = attiny_hal::Peripherals::take().unwrap();
@@ -93,9 +96,10 @@ fn main() -> ! {
 
     // Set up Timer0 for PWM
     dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
-    dp.TC0.tccr0b.write(|w| w.cs0().direct());
-    dp.TC0.ocr0a.write(|w| w.bits(79));
-
+    dp.TC0.tccr0b.write(|w| w.cs0().direct()); // Use prescaler of 8
+    dp.TC0.ocr0a.write(|w| w.bits(79)); // (8,000,000 / 8) / (99 + 1) = 10,000 Hz (100μs period)
+    
+ 
     // Timer0 Setup Math:
     // Target frequency: 100 kHz (10μs period)
     // ATtiny85 clock: 8 MHz
@@ -272,11 +276,10 @@ fn PCINT0() {
 #[avr_device::interrupt(attiny85)]
 fn TIMER0_COMPA() {
     free(|cs| {
-        let counter = COUNTER.borrow(cs).get();
-        let servo_pulses = SERVO_PULSES.borrow(cs).borrow();
-
-        if counter == 0 {
-            // Start of cycle, set both servos high
+        let toggle_state = TOGGLE_STATE.borrow(cs).get();
+        
+        if toggle_state {
+            // Set both servos high
             if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
                 base_servo.set_high();
             }
@@ -284,25 +287,17 @@ fn TIMER0_COMPA() {
                 tilt_servo.set_high();
             }
         } else {
-            // Check and set servos low if their pulse duration has passed
-            if counter >= servo_pulses[0] {
-                if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
-                    base_servo.set_low();
-                }
+            // Set both servos low
+            if let Some(base_servo) = BASE_SERVO.borrow(cs).borrow_mut().as_mut() {
+                base_servo.set_low();
             }
-            if counter >= servo_pulses[1] {
-                if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
-                    tilt_servo.set_low();
-                }
+            if let Some(tilt_servo) = TILT_SERVO.borrow(cs).borrow_mut().as_mut() {
+                tilt_servo.set_low();
             }
         }
 
-        // Increment or reset counter
-        if counter >= PWM_CYCLE - 1 {
-            COUNTER.borrow(cs).set(0);
-        } else {
-            COUNTER.borrow(cs).set(counter + 1);
-        }
+        // Toggle the state for the next interrupt
+        TOGGLE_STATE.borrow(cs).set(!toggle_state);
 
         // Increment the ALIVE_COUNTER
         let alive_counter = ALIVE_COUNTER.borrow(cs).get();
