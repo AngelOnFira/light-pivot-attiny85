@@ -143,112 +143,112 @@ fn main() -> ! {
         free(|cs| {
             let mut buffer = BUFFER.borrow(cs).borrow_mut();
 
-            if buffer.len() >= 3 {
-                let result: Result<(), ()> = (|| {
-                    let id_and_light = buffer.pop().ok_or(())?;
-                    let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
-                    let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
+            // if buffer.len() >= 3 {
+            //     let result: Result<(), ()> = (|| {
+            //         let id_and_light = buffer.pop().ok_or(())?;
+            //         let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
+            //         let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
 
-                    let _id = (id_and_light & 0xF0) >> 4;
-                    let light_state = id_and_light & 0x0F != 0;
+            //         let _id = (id_and_light & 0xF0) >> 4;
+            //         let light_state = id_and_light & 0x0F != 0;
 
-                    // Comment out servo position setting
-                    // set_servo_position(Servo::Base, rotation);
-                    // set_servo_position(Servo::Tilt, tilt);
+            //         // Comment out servo position setting
+            //         // set_servo_position(Servo::Base, rotation);
+            //         // set_servo_position(Servo::Tilt, tilt);
 
-                    // Handle light state
-                    if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-                        if light_state {
-                            light.set_high();
-                        } else {
-                            light.set_low();
-                        }
-                    }
+            //         // Handle light state
+            //         if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+            //             if light_state {
+            //                 light.set_high();
+            //             } else {
+            //                 light.set_low();
+            //             }
+            //         }
 
-                    // Update debug variables
-                    DEBUG_BASE.borrow(cs).set(rotation);
-                    DEBUG_TILT.borrow(cs).set(tilt);
-                    DEBUG_LIGHT.borrow(cs).set(light_state);
+            //         // Update debug variables
+            //         DEBUG_BASE.borrow(cs).set(rotation);
+            //         DEBUG_TILT.borrow(cs).set(tilt);
+            //         DEBUG_LIGHT.borrow(cs).set(light_state);
 
-                    Ok(())
-                })();
+            //         Ok(())
+            //     })();
 
-                if let Err(_error) = result {
-                    buffer.clear();
-                }
+            //     if let Err(_error) = result {
+            //         buffer.clear();
+            //     }
 
-            }
+            // }
 
-            // Check if 1 second has passed (100,000 * 10μs = 1 second)
-            if ALIVE_COUNTER.borrow(cs).get() >= 100_000 {
-                // Reset the counter
-                ALIVE_COUNTER.borrow(cs).set(0);
+            // // Check if 1 second has passed (100,000 * 10μs = 1 second)
+            // if ALIVE_COUNTER.borrow(cs).get() >= 100_000 {
+            //     // Reset the counter
+            //     ALIVE_COUNTER.borrow(cs).set(0);
 
-                // Increment the lifetime counter
-                let lifetime = LIFETIME_COUNTER.borrow(cs).get();
-                LIFETIME_COUNTER.borrow(cs).set(lifetime + 1);
+            //     // Increment the lifetime counter
+            //     let lifetime = LIFETIME_COUNTER.borrow(cs).get();
+            //     LIFETIME_COUNTER.borrow(cs).set(lifetime + 1);
 
-                // Toggle the light state
-                let new_light_state = !LIGHT_STATE.borrow(cs).get();
-                LIGHT_STATE.borrow(cs).set(new_light_state);
+            //     // Toggle the light state
+            //     let new_light_state = !LIGHT_STATE.borrow(cs).get();
+            //     LIGHT_STATE.borrow(cs).set(new_light_state);
 
-                // Toggle the servo state
-                let new_servo_state = !SERVO_STATE.borrow(cs).get();
-                SERVO_STATE.borrow(cs).set(new_servo_state);
+            //     // Toggle the servo state
+            //     let new_servo_state = !SERVO_STATE.borrow(cs).get();
+            //     SERVO_STATE.borrow(cs).set(new_servo_state);
 
-                // Update the light
-                if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-                    if new_light_state {
-                        light.set_high();
-                    } else {
-                        light.set_low();
-                    }
-                }
+            //     // Update the light
+            //     if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+            //         if new_light_state {
+            //             light.set_high();
+            //         } else {
+            //             light.set_low();
+            //         }
+            //     }
 
-                // Update servo positions
-                if new_servo_state {
-                    set_servo_position(Servo::Base, 120);
-                    set_servo_position(Servo::Tilt, 120);
-                } else {
-                    set_servo_position(Servo::Base, 20);
-                    set_servo_position(Servo::Tilt, 20);
-                }
+            //     // Update servo positions
+            //     if new_servo_state {
+            //         set_servo_position(Servo::Base, 120);
+            //         set_servo_position(Servo::Tilt, 120);
+            //     } else {
+            //         set_servo_position(Servo::Base, 20);
+            //         set_servo_position(Servo::Tilt, 20);
+            //     }
 
-                // Send "alive" message over UART
-                if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
-                    uart.send_string("alive (").unwrap();
-                    // Send the lifetime counter value
-                    uart.send(LIFETIME_COUNTER.borrow(cs).get() as u8).unwrap();
-                    uart.send_string("s)\r\n").unwrap();
+            //     // Send "alive" message over UART
+            //     if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
+            //         uart.send_string("alive (").unwrap();
+            //         // Send the lifetime counter value
+            //         uart.send(LIFETIME_COUNTER.borrow(cs).get() as u8).unwrap();
+            //         uart.send_string("s)\r\n").unwrap();
 
-                    uart.send_string(if new_light_state {
-                        "Light ON\r\n"
-                    } else {
-                        "Light OFF\r\n"
-                    })
-                    .unwrap();
-                    uart.send_string(if new_servo_state {
-                        "Servos at 120 degrees\r\n"
-                    } else {
-                        "Servos at 20 degrees\r\n"
-                    })
-                    .unwrap();
+            //         uart.send_string(if new_light_state {
+            //             "Light ON\r\n"
+            //         } else {
+            //             "Light OFF\r\n"
+            //         })
+            //         .unwrap();
+            //         uart.send_string(if new_servo_state {
+            //             "Servos at 120 degrees\r\n"
+            //         } else {
+            //             "Servos at 20 degrees\r\n"
+            //         })
+            //         .unwrap();
 
-                    // Send debug values
-                    uart.send_string("Base: ").unwrap();
-                    uart.send(DEBUG_BASE.borrow(cs).get()).unwrap();
-                    uart.send_string(" Tilt: ").unwrap();
-                    uart.send(DEBUG_TILT.borrow(cs).get()).unwrap();
-                    uart.send_string(" Light: ").unwrap();
-                    uart.send_string(if DEBUG_LIGHT.borrow(cs).get() {
-                        "ON"
-                    } else {
-                        "OFF"
-                    })
-                    .unwrap();
-                    uart.send_string("\r\n").unwrap();
-                }
-            }
+            //         // Send debug values
+            //         uart.send_string("Base: ").unwrap();
+            //         uart.send(DEBUG_BASE.borrow(cs).get()).unwrap();
+            //         uart.send_string(" Tilt: ").unwrap();
+            //         uart.send(DEBUG_TILT.borrow(cs).get()).unwrap();
+            //         uart.send_string(" Light: ").unwrap();
+            //         uart.send_string(if DEBUG_LIGHT.borrow(cs).get() {
+            //             "ON"
+            //         } else {
+            //             "OFF"
+            //         })
+            //         .unwrap();
+            //         uart.send_string("\r\n").unwrap();
+            //     }
+            // }
         });
 
         // Sleep until interrupt
