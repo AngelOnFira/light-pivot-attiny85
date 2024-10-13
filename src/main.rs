@@ -63,74 +63,35 @@ fn main() -> ! {
     dp.EXINT.gimsk.modify(|_, w| w.pcie().set_bit());
     dp.EXINT.pcmsk.modify(|_, w| w.pcint4().set_bit());
 
-    // // Set up Timer0 for PWM
-    // // dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
-    // dp.TC0.tccr0b.write(|w| w.cs0().prescale_64());
-    // dp.TC0.ocr0a.write(|w| w.bits(255));
-    // dp.TC0.timsk.write(|w| w.ocie0a().set_bit());
+    // Set up Timer0 for PWM
+    // dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
+    dp.TC0.tccr0b.write(|w| w.cs0().prescale_64());
+    dp.TC0.ocr0a.write(|w| w.bits(255));
+    dp.TC0.timsk.write(|w| w.ocie0a().set_bit());
 
-    // // Initialize ServoSequencer
-    // let mut sequencer = ServoSequencer::new(
-    //     [
-    //         ServoEntry {
-    //             pulse_length_in_ticks: 255,
-    //             enabled: true,
-    //         },
-    //         ServoEntry {
-    //             pulse_length_in_ticks: 255,
-    //             enabled: true,
-    //         },
-    //     ],
-    //     [Some(base_servo), Some(tilt_servo)],
-    // );
-    // sequencer.set_servo_position(Servo::Base, 90);
-    // sequencer.set_servo_position(Servo::Tilt, 90);
-    // free(|cs| SEQUENCER.borrow(cs).replace(Some(sequencer)));
+    // Initialize ServoSequencer
+    let mut sequencer = ServoSequencer::new(
+        [
+            ServoEntry {
+                pulse_length_in_ticks: 255,
+                enabled: true,
+            },
+            ServoEntry {
+                pulse_length_in_ticks: 255,
+                enabled: true,
+            },
+        ],
+        [Some(base_servo), Some(tilt_servo)],
+    );
+    sequencer.set_servo_position(Servo::Base, 90);
+    sequencer.set_servo_position(Servo::Tilt, 90);
+    free(|cs| SEQUENCER.borrow(cs).replace(Some(sequencer)));
 
     // Enable global interrupts
     unsafe { avr_device::interrupt::enable() };
 
     // Main loop
     loop {
-        // free(|cs| {
-        //     if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
-        //         let mut buffer = BUFFER.borrow(cs).borrow_mut();
-
-        //         if buffer.len() >= 3 {
-        //             // if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-        //             //     light.toggle();
-        //             // }
-        //             let result: Result<(), ()> = (|| {
-        //                 let id_and_light = buffer.pop().ok_or(())?;
-        //                 let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
-        //                 let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
-        //                 let _id = (id_and_light & 0xF0) >> 4;
-
-        //                 // Light will turn on if any of the lower 4 bits are 1
-        //                 // 0000 1111 & 0000 0001 = 0000 0001
-        //                 let light_state = id_and_light & 0x0F != 0;
-
-        //                 // Set servo positions
-        //                 sequencer.set_servo_position(Servo::Base, rotation);
-        //                 sequencer.set_servo_position(Servo::Tilt, tilt);
-
-        //                 // Handle light state
-        //                 if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-        //                     if light_state {
-        //                         light.set_high();
-        //                     } else {
-        //                         light.set_low();
-        //                     }
-        //                 }
-        //                 Ok(())
-        //             })();
-        //             if let Err(_error) = result {
-        //                 buffer.clear();
-        //             }
-        //         }
-        //     }
-        // });
-
         // Sleep until next interrupt
         avr_device::asm::sleep();
     }
@@ -138,30 +99,70 @@ fn main() -> ! {
 
 #[avr_device::interrupt(attiny85)]
 fn PCINT0() {
+    
     free(|cs| {
         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
             if let Ok(byte) = uart.receive() {
                 BUFFER.borrow(cs).borrow_mut().push(byte);
 
-                // Echo the byte back
-                uart.send(byte).unwrap();
+                // // Echo the byte back
+                // uart.send(byte).unwrap();
+            } else {
+                // If there was an error, it likely came from an interrupt
+                // being called a second time, so we can ignore it
+                return;
             }
-            // If there was an error, it likely came from an interrupt
-            // being called a second time, so we can ignore it
         }
 
         // // Toggle light
         // if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
         //     light.toggle();
         // }
+
+        let mut buffer = BUFFER.borrow(cs).borrow_mut();
+
+        if buffer.len() >= 3 {
+            // if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+            //     light.toggle();
+            // }
+            let result: Result<(), ()> = (|| {
+                let id_and_light = buffer.pop().ok_or(())?;
+                let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
+                let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
+                let _id = (id_and_light & 0xF0) >> 4;
+
+                // Light will turn on if any of the lower 4 bits are 1
+                // 0000 1111 & 0000 0001 = 0000 0001
+                let light_state = id_and_light & 0x0F != 0;
+
+                if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
+                    // Set servo positions
+                    sequencer.set_servo_position(Servo::Base, rotation);
+                    sequencer.set_servo_position(Servo::Tilt, tilt);
+                }
+
+                // Handle light state
+                if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+                    if light_state {
+                        light.set_high();
+                    } else {
+                        light.set_low();
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(_error) = result {
+                buffer.clear();
+            }
+        }
     });
 }
 
 #[avr_device::interrupt(attiny85)]
 fn TIMER0_COMPA() {
-    // free(|cs| {
-    //     if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
-    //         sequencer.update();
-    //     }
-    // });
+    free(|cs| {
+        if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
+            sequencer.update();
+        }
+    });
 }
