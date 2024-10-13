@@ -23,7 +23,7 @@ pub const TRIM_DURATION: u8 = 4;
 pub const SERVO_MIN: u16 = 1000; // Minimum pulse width in microseconds
 pub const SERVO_MAX: u16 = 2000; // Maximum pulse width in microseconds
 pub const CYCLE_TICK_COUNT: u16 = 2500; // 20ms / 50Hz
-pub const OSCCAL_ADJUSTMENT: i16 = -2;
+pub const OSCCAL_ADJUSTMENT: i16 = -8;
 
 // Static variables
 static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
@@ -115,13 +115,13 @@ fn main() -> ! {
                         sequencer.set_servo_position(Servo::Tilt, tilt);
 
                         // Handle light state
-                        // if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-                        //     if light_state {
-                        //         light.set_high();
-                        //     } else {
-                        //         light.set_low();
-                        //     }
-                        // }
+                        if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+                            if light_state {
+                                light.set_high();
+                            } else {
+                                light.set_low();
+                            }
+                        }
                         Ok(())
                     })();
                     if let Err(_error) = result {
@@ -143,8 +143,8 @@ fn PCINT0() {
             if let Ok(byte) = uart.receive() {
                 BUFFER.borrow(cs).borrow_mut().push(byte);
 
-                // Echo the byte back
-                uart.send(byte).unwrap();
+                // // Echo the byte back
+                // uart.send(byte).unwrap();
             }
             // If there was an error, it likely came from an interrupt
             // being called a second time, so we can ignore it
@@ -159,9 +159,9 @@ fn PCINT0() {
 
 #[avr_device::interrupt(attiny85)]
 fn TIMER0_COMPA() {
-    // free(|cs| {
-    //     if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
-    //         sequencer.update();
-    //     }
-    // });
+    free(|cs| {
+        if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
+            sequencer.update();
+        }
+    });
 }

@@ -12,7 +12,7 @@ panic-halt = { version = "0.2.0", default-features = false }
 avr-device = { version = "0.6.0", features = ["attiny85", "rt"], default-features = false }
 attiny-hal = { git = "https://github.com/rahix/avr-hal", features = ["attiny85", "rt"], default-features = false }
 embedded-hal = { version = "0.2.7", default-features = false }
-bitbang-hal = { path = "../bitbang-hal", default-features = false }
+bitbang-hal = { path = "../bitbang-hal" }
 nb = { version = "1.1.0", default-features = false }
 void = { version = "1.0.2", default-features = false }
 
@@ -30,3 +30,7 @@ lto = "thin"
 opt-level = "s"
 debug-assertions = false
 strip = true
+
+[[bin]]
+name = "calibration"
+path = "bin/calibration.rs"
