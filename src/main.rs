@@ -42,11 +42,13 @@ fn main() -> ! {
     dp.CPU.osccal.write(|w| w.bits(new_value));
 
     // Set up UART
-    let uart = SoftwareUart::new(
+    let mut uart = SoftwareUart::new(
         dp.TC1,
         pins.pb4.into_floating_input(),
         pins.pb3.into_output_high(),
     );
+    // Send debug message
+    uart.send_string("Hello, world!\r\n").unwrap();
     free(|cs| UART.borrow(cs).replace(Some(uart)));
 
     // Set up servo pins

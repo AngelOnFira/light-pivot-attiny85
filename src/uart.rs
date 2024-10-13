@@ -85,9 +85,10 @@ impl SoftwareUart {
     }
 
     pub fn send_string(&mut self, data: &str) -> nb::Result<(), Error<Infallible>> {
-        // for byte in data.as_bytes() {
-        //     self.serial.write(*byte)?;
-        // }
+        use attiny_hal::prelude::_embedded_hal_serial_Write;
+        for byte in data.as_bytes() {
+            self.serial.write(*byte)?;
+        }
 
         Ok(())
     }
