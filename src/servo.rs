@@ -4,7 +4,7 @@ use avr_device::interrupt::{free, Mutex};
 use core::cell::{Cell, RefCell};
 use panic_halt as _;
 
-use crate::{CYCLE_TICK_COUNT, SERVO_COUNT, SERVO_MAX, SERVO_MIN, SERVO_REGISTRY, TRIM_DURATION};
+use crate::{CYCLE_TICK_COUNT, SERVO_COUNT, SERVO_MAX, SERVO_MIN, TRIM_DURATION};
 
 pub struct ServoSequencer {
     state: SequencerState,
@@ -149,13 +149,11 @@ impl ServoSequencer {
 
     pub fn set_servo_position(&mut self, servo: Servo, degrees: u8) {
         let pulse = map_degrees_to_pulse(degrees);
-        free(|cs| {
-            let index = match servo {
-                Servo::Base => 0,
-                Servo::Tilt => 1,
-            };
-            self.servo_registry[index].pulse_length_in_ticks = (pulse / 8) as u8;
-        });
+        let index = match servo {
+            Servo::Base => 0,
+            Servo::Tilt => 1,
+        };
+        self.servo_registry[index].pulse_length_in_ticks = (pulse / 8) as u8;
     }
 }
 

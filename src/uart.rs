@@ -2,7 +2,6 @@ use attiny_hal::pac::TC1;
 use attiny_hal::port::mode::{Floating, Input, Output};
 use attiny_hal::port::{Pin, PB3, PB4};
 use attiny_hal::prelude::_embedded_hal_serial_Read;
-use attiny_hal::prelude::_embedded_hal_serial_Write;
 use avr_device::asm::nop;
 use bitbang_hal::serial::{Error, Nop, Reset, Serial};
 use core::convert::Infallible;

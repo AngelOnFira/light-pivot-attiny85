@@ -3,11 +3,11 @@
 #![feature(abi_avr_interrupt)]
 
 use attiny_hal::port::mode::Output;
-use attiny_hal::port::{Dynamic, Pin, PB0, PB1, PB2};
+use attiny_hal::port::{Pin, PB2};
 use avr_device::interrupt::{free, Mutex};
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use panic_halt as _;
-use servo::{SequencerState, Servo, ServoEntry, ServoSequencer};
+use servo::{Servo, ServoEntry, ServoSequencer};
 
 mod buffer;
 mod servo;
@@ -28,18 +28,6 @@ pub const OSCCAL_ADJUSTMENT: i16 = -2;
 // Static variables
 static UART: Mutex<RefCell<Option<SoftwareUart>>> = Mutex::new(RefCell::new(None));
 static BUFFER: Mutex<RefCell<Buffer>> = Mutex::new(RefCell::new(Buffer::new()));
-static STATE: Mutex<Cell<SequencerState>> = Mutex::new(Cell::new(SequencerState::SetPinHigh));
-static SERVO_INDEX: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
-static SERVO_REGISTRY: Mutex<RefCell<[ServoEntry; SERVO_COUNT]>> = Mutex::new(RefCell::new([
-    ServoEntry {
-        pulse_length_in_ticks: 255,
-        enabled: true,
-    },
-    ServoEntry {
-        pulse_length_in_ticks: 255,
-        enabled: true,
-    },
-]));
 static LIGHT: Mutex<RefCell<Option<Pin<Output, PB2>>>> = Mutex::new(RefCell::new(None));
 static SEQUENCER: Mutex<RefCell<Option<ServoSequencer>>> = Mutex::new(RefCell::new(None));
 
@@ -54,7 +42,7 @@ fn main() -> ! {
     dp.CPU.osccal.write(|w| w.bits(new_value));
 
     // Set up UART
-    let mut uart = SoftwareUart::new(
+    let uart = SoftwareUart::new(
         dp.TC1,
         pins.pb4.into_floating_input(),
         pins.pb3.into_output_high(),
@@ -102,7 +90,40 @@ fn main() -> ! {
 
     // Main loop
     loop {
-        // Your main loop logic here
+        free(|cs| {
+            if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
+                let mut buffer = BUFFER.borrow(cs).borrow_mut();
+
+                if buffer.len() >= 3 {
+                    let result: Result<(), ()> = (|| {
+                        let id_and_light = buffer.pop().ok_or(())?;
+                        let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
+                        let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
+                        let _id = (id_and_light & 0xF0) >> 4;
+                        let light_state = id_and_light & 0x0F != 0;
+
+                        // Set servo positions
+                        sequencer.set_servo_position(Servo::Base, rotation);
+                        sequencer.set_servo_position(Servo::Tilt, tilt);
+
+                        // Handle light state
+                        if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+                            if light_state {
+                                light.set_high();
+                            } else {
+                                light.set_low();
+                            }
+                        }
+                        Ok(())
+                    })();
+                    if let Err(_error) = result {
+                        buffer.clear();
+                    }
+                }
+            }
+        });
+
+        // Sleep until next interrupt
         avr_device::asm::sleep();
     }
 }
