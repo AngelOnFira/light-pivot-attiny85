@@ -8,6 +8,7 @@ inherit = "attiny85"
 
 [board.avrdude]
 baudrate = 19200
+# Change this to 0xA2 to send out clock signal on PB4
 lfuse = "0xE2"
 hfuse = "0xDF"
 efuse = "0xFF"
