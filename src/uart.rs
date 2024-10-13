@@ -79,8 +79,9 @@ impl SoftwareUart {
     }
 
     pub fn send(&mut self, data: u8) -> nb::Result<(), Error<Infallible>> {
-        // self.serial.write(data)
-        Ok(())
+        use attiny_hal::prelude::_embedded_hal_serial_Write;
+        self.serial.write(data)
+        // Ok(())
     }
 
     pub fn send_string(&mut self, data: &str) -> nb::Result<(), Error<Infallible>> {

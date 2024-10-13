@@ -54,12 +54,12 @@ fn main() -> ! {
     let tilt_servo = pins.pb1.into_output().downgrade();
 
     // Set up light pin
-    let light = pins.pb2.into_output();
+    let light = pins.pb2.into_output_high();
     free(|cs| LIGHT.borrow(cs).replace(Some(light)));
 
-    // Enable Pin Change Interrupt for PB3
+    // Enable Pin Change Interrupt for PB4
     dp.EXINT.gimsk.modify(|_, w| w.pcie().set_bit());
-    dp.EXINT.pcmsk.modify(|_, w| w.pcint3().set_bit());
+    dp.EXINT.pcmsk.modify(|_, w| w.pcint4().set_bit());
 
     // Set up Timer0 for PWM
     // dp.TC0.tccr0a.write(|w| w.wgm0().ctc());
@@ -95,11 +95,17 @@ fn main() -> ! {
                 let mut buffer = BUFFER.borrow(cs).borrow_mut();
 
                 if buffer.len() >= 3 {
+                    // if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+                    //     light.toggle();
+                    // }
                     let result: Result<(), ()> = (|| {
                         let id_and_light = buffer.pop().ok_or(())?;
                         let rotation = buffer.pop().ok_or(())?.clamp(0, 180);
                         let tilt = buffer.pop().ok_or(())?.clamp(0, 180);
                         let _id = (id_and_light & 0xF0) >> 4;
+
+                        // Light will turn on if any of the lower 4 bits are 1
+                        // 0000 1111 & 0000 0001 = 0000 0001
                         let light_state = id_and_light & 0x0F != 0;
 
                         // Set servo positions
@@ -107,13 +113,13 @@ fn main() -> ! {
                         sequencer.set_servo_position(Servo::Tilt, tilt);
 
                         // Handle light state
-                        if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
-                            if light_state {
-                                light.set_high();
-                            } else {
-                                light.set_low();
-                            }
-                        }
+                        // if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+                        //     if light_state {
+                        //         light.set_high();
+                        //     } else {
+                        //         light.set_low();
+                        //     }
+                        // }
                         Ok(())
                     })();
                     if let Err(_error) = result {
@@ -134,18 +140,26 @@ fn PCINT0() {
         if let Some(uart) = UART.borrow(cs).borrow_mut().as_mut() {
             if let Ok(byte) = uart.receive() {
                 BUFFER.borrow(cs).borrow_mut().push(byte);
+
+                // Echo the byte back
+                uart.send(byte).unwrap();
             }
             // If there was an error, it likely came from an interrupt
             // being called a second time, so we can ignore it
+        }
+
+        // Toggle light
+        if let Some(light) = LIGHT.borrow(cs).borrow_mut().as_mut() {
+            light.toggle();
         }
     });
 }
 
 #[avr_device::interrupt(attiny85)]
 fn TIMER0_COMPA() {
-    free(|cs| {
-        if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
-            sequencer.update();
-        }
-    });
+    // free(|cs| {
+    //     if let Some(sequencer) = SEQUENCER.borrow(cs).borrow_mut().as_mut() {
+    //         sequencer.update();
+    //     }
+    // });
 }
